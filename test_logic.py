@@ -48,8 +48,12 @@ from prevention import (
     get_coffman_conditions_summary
 )
 from validation import (
-    validate_matrix_shape_and_types,
+    validate_matrix,
     validate_vector,
+    validate_process_id,
+    validate_configuration,
+    validate_request,
+    validate_matrix_shape_and_types,
     validate_system_state,
     validate_request_input
 )
