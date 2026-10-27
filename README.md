@@ -1,127 +1,195 @@
-# Curator
+# Deadlock Analysis and Resource Allocation Dashboard
 
-**Every conclusion, traced to its evidence.**
+An interactive dashboard for learning and demonstrating how operating systems **avoid**, **detect**, **prevent** and **recover from** deadlocks. Built as part of the OS Internal Assessment (Activity 2: AI-Assisted Dashboard Development and Deadlock Analysis).
 
-AI-assisted security investigation for SOC analysts: correlates alerts and logs,
-reconstructs attack timelines, maps them to MITRE ATT&CK, and links every generated
-sentence to the raw log line that supports it.
-
-- `system_design.md` — architecture, data model, API contracts, conventions
-- `DESIGN.md` — interface specification, authoritative for anything visual
-
-**Status: Step 1 of 7.** Three containers, the full schema, `GET /health`, and a
-placeholder page. No parsers, pipeline, or AI yet.
+> **Course:** Operating Systems
+> **Institute:** _<your institute name>_
+> **Group:** _<group name / number>_
+> **Members:** _<Name 1 (Roll No.)>, <Name 2 (Roll No.)>, <Name 3 (Roll No.)>, <Name 4 (Roll No.)>_
 
 ---
 
-## Setup on Kali Linux (rootless Docker)
-
-### 1. Install Docker Engine, Compose v2, and the rootless extras
-
-Kali is Debian-based; use Docker's Debian `bookworm` repository.
-
-```sh
-sudo apt update
-sudo apt install -y ca-certificates curl make openssl uidmap dbus-user-session slirp4netns
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
-  | sudo tee /etc/apt/sources.list.d/docker.list
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin \
-  docker-compose-plugin docker-ce-rootless-extras
-```
-
-Compose must be the v2 plugin (`docker compose`), not the legacy `docker-compose` binary.
-
-### 2. Switch to rootless mode
-
-```sh
-# Your user needs subordinate ID ranges (Kali normally creates them).
-grep "^$(whoami):" /etc/subuid /etc/subgid
-
-# Stop the rootful daemon so the setup tool doesn't refuse, and so nothing talks to it by accident.
-sudo systemctl disable --now docker.service docker.socket
-
-dockerd-rootless-setuptool.sh install
-systemctl --user enable --now docker
-sudo loginctl enable-linger "$(whoami)"     # keep the daemon running after logout
-
-docker context use rootless                 # created by the setup tool
-```
-
-Optional but recommended: membership in the `docker` group is root-equivalent on a
-rootful socket. Once you are on rootless, remove it with `sudo gpasswd -d "$(whoami)" docker`.
-
-Confirm:
-
-```sh
-docker info --format '{{.SecurityOptions}}'   # must include name=rootless
-docker compose version                        # v2.x or later
-```
-
-### 3. Start Curator
-
-```sh
-make up
-```
-
-On the first run this creates `api/.env` from `.env.example` with a random
-`POSTGRES_PASSWORD`, builds the API and web images, starts all three containers, and
-returns once all three pass their healthchecks.
-
-- Web: <http://localhost:5173> (shows `connected` when the API and database are up)
-- API: <http://localhost:8000/health>
-
-Add `ANTHROPIC_API_KEY` to `api/.env` before Step 4. Nothing calls the Anthropic API
-in Step 1, and `DRY_RUN=true` stays the default until you change it.
+## Table of Contents
+1. [Features](#features)
+2. [Tech Stack](#tech-stack)
+3. [Installation and Running](#installation-and-running)
+4. [Project Structure](#project-structure)
+5. [Dashboard Modules](#dashboard-modules)
+6. [Status Messages](#status-messages)
+7. [Request Handling Logic](#request-handling-logic)
+8. [Test Scenarios (A to F)](#test-scenarios-a-to-f)
+9. [Analytical Results Table](#analytical-results-table)
+10. [Sample Data](#sample-data)
+11. [AI Usage Record](#ai-usage-record)
+12. [Screenshots](#screenshots)
+13. [Limitations](#limitations)
+14. [Contributors](#contributors)
 
 ---
 
-## Make targets
+## Features
 
-| Target           | What it does                                                          |
-| ---------------- | --------------------------------------------------------------------- |
-| `make up`        | Build and start everything, detached; waits until all three are healthy |
-| `make down`      | Stop and remove containers; the database volume is kept               |
-| `make reset`     | `down`, **delete the database volume**, `up` — re-runs `db/init/`     |
-| `make seed`      | Load the dataset (not implemented yet — Step 2)                       |
-| `make eval`      | Run the accuracy harness (not implemented yet — Step 6)               |
-| `make logs`      | Follow logs from all three services                                   |
-| `make shell-api` | Bash inside `curator-api`                                             |
-| `make psql`      | `psql` inside `curator-db`, using the container's own credentials     |
+- Configurable number of processes and resource types, with editable **Allocation**, **Maximum** and **Available** inputs.
+- Automatic **Need = Maximum − Allocation** calculation.
+- **Banker's Algorithm** with step-by-step **Work vector** updates and the complete **safe sequence**.
+- **Resource request validation** with simulate, grant or deny, and automatic **state restoration**.
+- Separate modules for **Deadlock Avoidance**, **Deadlock Detection**, and **Prevention / Recovery**.
+- Distinct status messages for Safe, Unsafe, Waiting/Deferred, Deadlock Detected and Invalid Input.
+- Built-in explanation of why **an unsafe state is not necessarily a deadlock**.
+- Preset buttons for test scenarios A to F and a Reset button.
+- Input validation for boundary and invalid cases.
 
-## Services
+## Tech Stack
 
-| Service       | Image / base              | Host port          | Notes                                        |
-| ------------- | ------------------------- | ------------------ | -------------------------------------------- |
-| `curator-db`  | `pgvector/pgvector:pg16`  | none               | volume `pgdata`; `db/init/` runs on first boot |
-| `curator-api` | `python:3.11-slim`        | `127.0.0.1:8000`   | FastAPI + uvicorn `--reload`; `./api` mounted |
-| `curator-web` | `node:20-alpine`          | `127.0.0.1:5173`   | Vite dev server; `./web` mounted             |
+| Component | Tool |
+|---|---|
+| Language | Python 3.9+ |
+| Dashboard | Streamlit |
+| Data handling | NumPy / Pandas |
+| Visualization | Graphviz / NetworkX / Matplotlib (for graphs) |
+| AI assistance | See [AI Usage Record](#ai-usage-record) |
 
-## Notes
+## Installation and Running
 
-- **Ports bind to 127.0.0.1 only**, so the dev stack isn't exposed on shared (e.g.
-  hackathon) Wi-Fi. To reach it from another device, change the `ports:` entries in
-  `docker-compose.yml` to drop the `127.0.0.1:` prefix.
-- **Postgres has no host port.** Kali's own PostgreSQL (used by `msfdb`) often holds
-  5432. Use `make psql`.
-- **`db/init/` runs only on an empty volume.** For schema changes, add a numbered file
-  (`002_*.sql`) and run `make reset`. The same applies to changing `POSTGRES_*` in
-  `api/.env`: Postgres stores the credentials when it initialises the volume.
-- **`api/.env` is the only real env file** and is gitignored. `.env.example` is the
-  committed template.
-- **Web dependencies** live in the image, not on the host. `make up` passes
-  `--renew-anon-volumes`, so the container picks up changes to `package.json`.
-- Under rootless Docker, container root maps to your user, so anything the containers
-  write into `./api` or `./web` stays owned by you.
+```bash
+# 1. Clone the repository
+git clone https://github.com/<your-username>/<your-repo-name>.git
+cd <your-repo-name>
 
-## Troubleshooting
+# 2. (Optional) create a virtual environment
+python -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
 
-| Symptom                                               | Cause and fix                                                            |
-| ----------------------------------------------------- | ------------------------------------------------------------------------ |
-| `env file .../api/.env not found`                     | You ran `docker compose` directly before the first `make up`. Run `make up`, or `cp .env.example api/.env`. |
-| `permission denied ... /var/run/docker.sock`          | The CLI is pointed at the rootful socket. Run `docker context use rootless`. |
-| Page shows `database unreachable`                     | The API is up but can't reach Postgres. `make logs`, check `curator-db`. |
-| `password authentication failed` after editing `api/.env` | The volume was initialised with the old password. `make reset`.      |
-| `port is already allocated` on 8000 or 5173           | Something else is listening: `ss -ltnp \| grep -E ':(8000\|5173)'`.        |
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Run the dashboard
+streamlit run app.py
+```
+
+The dashboard opens at `http://localhost:8501`.
+
+**Example `requirements.txt`:**
+```
+streamlit
+numpy
+pandas
+networkx
+matplotlib
+graphviz
+```
+
+## Project Structure
+
+> Adjust this to match your actual files.
+
+```
+.
+├── app.py                # Streamlit entry point (tabs / navigation)
+├── banker.py             # Need matrix, safety algorithm, request handling
+├── detection.py          # Deadlock detection (wait-for graph / matrix method)
+├── prevention.py         # Prevention policies and recovery (process termination)
+├── validation.py         # Input validation helpers
+├── scenarios.py          # Preset data for scenarios A to F
+├── requirements.txt
+├── screenshots/          # Evidence of actual outputs
+└── README.md
+```
+
+## Dashboard Modules
+
+### 1. Deadlock Avoidance (Banker's Algorithm)
+- Computes the Need matrix: `Need[i][j] = Max[i][j] − Allocation[i][j]`.
+- Runs the **safety algorithm**:
+  1. `Work = Available`, `Finish[i] = False` for all `i`.
+  2. Find `i` with `Finish[i] = False` and `Need[i] ≤ Work`.
+  3. `Work = Work + Allocation[i]`, `Finish[i] = True`; repeat.
+  4. If all `Finish[i]` are True, the state is **safe** and the order found is the **safe sequence**.
+- Displays the Work vector after each process completes.
+- Handles resource requests (see [Request Handling Logic](#request-handling-logic)).
+
+> The Banker's Algorithm checks whether *granting a request* keeps the system in a safe state. It does **not** detect an existing deadlock.
+
+### 2. Deadlock Detection
+- Runs on a **separate** scenario with processes waiting for resources held by one another.
+- **Resource model used:** _<single-instance / multiple-instance, state clearly>_
+- **Method:**
+  - *Single-instance:* Wait-for graph and cycle detection. A cycle means deadlock.
+  - *Multiple-instance:* Detection algorithm using Allocation, Request, Work and Finish. A cycle alone is **not** conclusive proof of deadlock here.
+- Lists the deadlocked processes and visualizes the relationships.
+
+### 3. Deadlock Prevention and Recovery
+- **Prevention:** modifies the allocation policy to eliminate one necessary condition:
+  - _Resource ordering_ breaks **circular wait**.
+  - _Request all resources up front_ breaks **hold and wait**.
+- Compares the original and modified scenarios and lists trade-offs (lower utilization, reduced concurrency, possible starvation).
+- **Recovery:** terminates a selected process, releases its resources, and shows how the remaining processes can then progress.
+
+## Status Messages
+
+| Status | Meaning |
+|---|---|
+| **SAFE** | A complete safe sequence exists. |
+| **UNSAFE** | No safe sequence exists. This does not mean deadlock has occurred; it means deadlock is possible. |
+| **WAITING / DEFERRED** | Request is within the process's Need but exceeds Available. It cannot be granted now and is not invalid or permanently denied. |
+| **DEADLOCK DETECTED** | Detection found processes that can never proceed. |
+| **INVALID INPUT** | Bad process ID, negative values, non-numeric input, or allocation above maximum. |
+
+## Request Handling Logic
+
+For a request `Request_i` by process `P_i`:
+
+1. **Invalid input?** (bad process ID, negative, non-numeric) → **Invalid Input**.
+2. **`Request_i > Need_i`?** → Error: process exceeded its maximum claim.
+3. **`Request_i > Available`?** → **Waiting / Deferred**. The state is unchanged.
+4. Otherwise **temporarily allocate**:
+   ```
+   Available  = Available  − Request_i
+   Allocation_i = Allocation_i + Request_i
+   Need_i       = Need_i       − Request_i
+   ```
+5. Run the **safety algorithm**:
+   - **Safe** → request granted, state updated.
+   - **Unsafe** → request **denied**, original state **restored** and retained.
+
+## Test Scenarios (A to F)
+
+| Scenario | Description |
+|---|---|
+| **A: Safe State** | Need matrix, Work vector updates, full safe sequence and explanation. |
+| **B: Request > Available** | Valid request within Need but above Available. Reported as waiting/deferred; allocation unchanged. |
+| **C: Unsafe Request** | Request within Need and Available, but granting it leaves no safe sequence. Denied, state restored. |
+| **D: Deadlock Detection** | Circular wait or detection-algorithm result, plus one recovery action. |
+| **E: Prevention** | Resource ordering or request-all-upfront, with before/after comparison and trade-offs. |
+| **F: Boundary / Invalid Inputs** | Zero Available, zero Need, invalid process ID, negative request, allocation above maximum. |
+
+## Analytical Results Table
+
+> Fill the **Actual Result** and **Analysis** columns using real outputs from this dashboard only.
+
+| Test Case | System Condition | Actual Result | Expected Result | Analysis / Conclusion |
+|---|---|---|---|---|
+| TC1 | Safe state | _<fill>_ | Safe sequence found | _<fill>_ |
+| TC2 | Request exceeds Available | _<fill>_ | Request not granted immediately | _<fill>_ |
+| TC3 | Request makes state unsafe | _<fill>_ | Request denied; state unchanged | _<fill>_ |
+| TC4 | Deadlocked scenario | _<fill>_ | Deadlock identified by the selected detection method | _<fill>_ |
+| TC5 | Prevention policy applied | _<fill>_ | Selected deadlock condition eliminated | _<fill>_ |
+| TC6 | Boundary and invalid inputs | _<fill>_ | Correct handling or validation message | _<fill>_ |
+
+## Sample Data
+
+Classic textbook example (5 processes P0 to P4, resource types A, B, C with 10, 5, 7 total instances):
+
+| Process | Allocation (A B C) | Max (A B C) |
+|---|---|---|
+| P0 | 0 1 0 | 7 5 3 |
+| P1 | 2 0 0 | 3 2 2 |
+| P2 | 3 0 2 | 9 0 2 |
+| P3 | 2 1 1 | 2 2 2 |
+| P4 | 0 0 2 | 4 3 3 |
+
+**Available:** `3 3 2`
+
+- **Scenario A:** a safe sequence exists (for example `P1 → P3 → P4 → P0 → P2`). Confirm with the dashboard output.
+- **Scenario B:** after granting P1 `(1,0,2)`, Available becomes `(2,3,0)`. P4 requesting `(3,3,0)` is within its Need but exceeds Available.
+- **Scenario C:** after granting P1 `(1,0,2)`, P0 requesting `(0,2,0)` is within Need and Available but leaves no safe sequence.
