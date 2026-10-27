@@ -876,8 +876,8 @@ with tab_avoidance:
     st.markdown("---")
 
     # 3. Safety Check Button
-    st.subheader("Run Safety Check")
-    st.caption("Executes Dijkstra's Safety Algorithm to find a safe execution sequence.")
+    st.subheader("Banker's Algorithm — Safety Check")
+    st.caption("Checks whether the current resource allocation is in a safe state.")
 
     if st.button("🚀 Run Safety Check", type="primary", use_container_width=True):
         # Validate configuration before running

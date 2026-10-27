@@ -47,7 +47,7 @@ def safety_check(
     available: np.ndarray
 ) -> Dict[str, Any]:
     """
-    Runs Dijkstra's Banker's Safety Algorithm on the given system state.
+    Runs Banker's Safety Algorithm on the given system state.
 
     Algorithm:
     1. Work = Available (copy)
