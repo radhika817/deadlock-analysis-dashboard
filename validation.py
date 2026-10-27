@@ -28,39 +28,45 @@ def validate_matrix(
 ) -> Tuple[bool, str, str]:
     """
     Validates a 2D matrix for shape, integer values, and non-negativity.
+    Never raises exceptions.
 
     Returns:
         (is_valid, message, kind) where kind is "VALID" or "INVALID".
     """
     try:
+        if matrix is None:
+            return False, f"{name}: Input cannot be None.", "INVALID"
+
         arr = np.array(matrix)
+        if arr.ndim != 2:
+            return False, f"{name}: Expected a 2D matrix, but got {arr.ndim}D array.", "INVALID"
+
+        if not np.issubdtype(arr.dtype, np.number):
+            return False, f"{name}: Contains non-numeric elements.", "INVALID"
+
+        if expected_rows is not None and arr.shape[0] != expected_rows:
+            return False, f"{name}: Expected {expected_rows} rows, but got {arr.shape[0]}.", "INVALID"
+
+        if expected_cols is not None and arr.shape[1] != expected_cols:
+            return False, f"{name}: Expected {expected_cols} columns, but got {arr.shape[1]}.", "INVALID"
+
+        # Check for NaN / Inf
+        if not np.isfinite(arr).all():
+            return False, f"{name}: Contains NaN, null, or infinite values.", "INVALID"
+
+        # Check for non-integers
+        if not np.all(np.equal(np.mod(arr, 1), 0)):
+            return False, f"{name}: Contains non-integer values. All resource counts must be integers.", "INVALID"
+
+        # Check for negative numbers
+        if (arr < 0).any():
+            neg_indices = np.argwhere(arr < 0)
+            r, c = neg_indices[0]
+            return False, f"{name}: Negative values are invalid. Found {arr[r, c]} at row {r}, column {c}.", "INVALID"
+
+        return True, f"{name} is valid.", "VALID"
     except Exception as e:
-        return False, f"{name}: Unable to convert to numeric array ({e}).", "INVALID"
-
-    if arr.ndim != 2:
-        return False, f"{name}: Expected a 2D matrix, but got {arr.ndim}D array.", "INVALID"
-
-    if expected_rows is not None and arr.shape[0] != expected_rows:
-        return False, f"{name}: Expected {expected_rows} rows, but got {arr.shape[0]}.", "INVALID"
-
-    if expected_cols is not None and arr.shape[1] != expected_cols:
-        return False, f"{name}: Expected {expected_cols} columns, but got {arr.shape[1]}.", "INVALID"
-
-    # Check for NaN / Inf
-    if not np.isfinite(arr).all():
-        return False, f"{name}: Contains NaN, null, or infinite values.", "INVALID"
-
-    # Check for non-integers
-    if not np.all(np.equal(np.mod(arr, 1), 0)):
-        return False, f"{name}: Contains non-integer values. All resource counts must be integers.", "INVALID"
-
-    # Check for negative numbers
-    if (arr < 0).any():
-        neg_indices = np.argwhere(arr < 0)
-        r, c = neg_indices[0]
-        return False, f"{name}: Negative values are invalid. Found {arr[r, c]} at row {r}, column {c}.", "INVALID"
-
-    return True, f"{name} is valid.", "VALID"
+        return False, f"{name}: Validation failed with error ({e}).", "INVALID"
 
 
 def validate_vector(
@@ -71,66 +77,76 @@ def validate_vector(
     """
     Validates a 1D vector for expected length, integers, and non-negativity.
     Identifies all-zero vector as a valid boundary case.
+    Never raises exceptions.
 
     Returns:
         (is_valid, message, kind) where kind is "VALID", "VALID_BOUNDARY", or "INVALID".
     """
     try:
+        if vector is None:
+            return False, f"{name}: Input cannot be None.", "INVALID"
+
         arr = np.array(vector).flatten()
+        if expected_len is not None and len(arr) != expected_len:
+            return False, f"{name}: Expected length {expected_len}, got {len(arr)}.", "INVALID"
+
+        if not np.issubdtype(arr.dtype, np.number):
+            return False, f"{name}: Contains non-numeric elements.", "INVALID"
+
+        if not np.isfinite(arr).all():
+            return False, f"{name}: Contains NaN, null, or infinite values.", "INVALID"
+
+        if not np.all(np.equal(np.mod(arr, 1), 0)):
+            return False, f"{name}: Contains non-integer values. All values must be whole integers.", "INVALID"
+
+        if (arr < 0).any():
+            neg_idx = int(np.where(arr < 0)[0][0])
+            return False, f"{name}: Negative value {arr[neg_idx]} found at index {neg_idx}.", "INVALID"
+
+        # Valid boundary check: all zeros
+        if len(arr) > 0 and np.all(arr == 0):
+            return True, f"{name} is all zeros (valid boundary case).", "VALID_BOUNDARY"
+
+        return True, f"{name} is valid.", "VALID"
     except Exception as e:
-        return False, f"{name}: Unable to convert to array ({e}).", "INVALID"
-
-    if expected_len is not None and len(arr) != expected_len:
-        return False, f"{name}: Expected length {expected_len}, got {len(arr)}.", "INVALID"
-
-    if not np.isfinite(arr).all():
-        return False, f"{name}: Contains NaN, null, or infinite values.", "INVALID"
-
-    if not np.all(np.equal(np.mod(arr, 1), 0)):
-        return False, f"{name}: Contains non-integer values. All values must be whole integers.", "INVALID"
-
-    if (arr < 0).any():
-        neg_idx = int(np.where(arr < 0)[0][0])
-        return False, f"{name}: Negative value {arr[neg_idx]} found at index {neg_idx}.", "INVALID"
-
-    # Valid boundary check: all zeros
-    if len(arr) > 0 and np.all(arr == 0):
-        return True, f"{name} is all zeros (valid boundary case).", "VALID_BOUNDARY"
-
-    return True, f"{name} is valid.", "VALID"
+        return False, f"{name}: Validation failed with error ({e}).", "INVALID"
 
 
 def validate_process_id(process_id: Any, num_processes: int) -> Tuple[bool, str, str]:
     """
     Validates whether a process identifier is a valid integer within [0, num_processes - 1].
     Accepts integer, string integer (e.g. "2"), or label (e.g. "P2").
+    Never raises exceptions.
 
     Returns:
         (is_valid, message, kind) where kind is "VALID" or "INVALID".
     """
-    parsed_id = None
     try:
+        if process_id is None:
+            return False, "Process ID cannot be None.", "INVALID"
+
+        parsed_id = None
         if isinstance(process_id, str):
             cleaned = process_id.strip().upper()
-            if cleaned.startswith("P") and cleaned[1:].isdigit():
+            if cleaned.startswith("P") and cleaned[1:].lstrip("-").isdigit():
                 parsed_id = int(cleaned[1:])
-            elif cleaned.isdigit() or (cleaned.startswith("-") and cleaned[1:].isdigit()):
+            elif cleaned.lstrip("-").isdigit():
                 parsed_id = int(cleaned)
         elif isinstance(process_id, (int, np.integer)):
             parsed_id = int(process_id)
-    except Exception:
-        parsed_id = None
 
-    if parsed_id is None:
-        return False, f"Invalid process ID '{process_id}'. Must be an integer or label (e.g. P0).", "INVALID"
+        if parsed_id is None:
+            return False, f"Invalid process ID '{process_id}'. Must be an integer or label (e.g. P0).", "INVALID"
 
-    if parsed_id < 0 or parsed_id >= num_processes:
-        return False, (
-            f"Invalid process ID {parsed_id}: Out of range. "
-            f"Must be between 0 and {num_processes - 1}."
-        ), "INVALID"
+        if parsed_id < 0 or parsed_id >= num_processes:
+            return False, (
+                f"Invalid process ID {parsed_id}: Out of range. "
+                f"Must be between 0 and {num_processes - 1}."
+            ), "INVALID"
 
-    return True, f"Process ID P{parsed_id} is valid.", "VALID"
+        return True, f"Process ID P{parsed_id} is valid.", "VALID"
+    except Exception as e:
+        return False, f"Process ID validation error ({e}).", "INVALID"
 
 
 def validate_configuration(
@@ -142,6 +158,7 @@ def validate_configuration(
 ) -> Tuple[bool, str, str]:
     """
     Validates system matrices (Allocation, Maximum, Available).
+    Never raises exceptions.
 
     Checks:
     - Matrix and vector shapes and types.
@@ -155,11 +172,8 @@ def validate_configuration(
         (is_valid, message, kind) where kind is "VALID", "VALID_BOUNDARY", or "INVALID".
     """
     try:
-        alloc_arr = np.array(allocation)
-        max_arr = np.array(maximum)
-        avail_arr = np.array(available).flatten()
-    except Exception as e:
-        return False, f"Unable to parse configuration matrices: {e}", "INVALID"
+        if allocation is None or maximum is None or available is None:
+            return False, "Configuration matrices/vectors cannot be None.", "INVALID"
 
     # Validate shapes and dimensions
     if alloc_arr.ndim != 2:
