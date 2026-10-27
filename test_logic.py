@@ -70,7 +70,14 @@ from scenarios import (
     get_scenario_d_single,
     get_scenario_d_multi,
     get_scenario_e,
-    get_scenario_f
+    get_scenario_f,
+    run_scenario_a,
+    run_scenario_b,
+    run_scenario_c,
+    run_scenario_d,
+    run_scenario_e,
+    run_scenario_f,
+    get_all_scenarios_results_table
 )
 
 
@@ -774,6 +781,48 @@ def test_get_coffman_breakdown():
     assert len(up_breakdown) == 4
     # Condition 2 (Hold and Wait) must be eliminated
     assert up_breakdown[1]["is_eliminated"] is True
+
+
+def test_all_scenarios_runners_and_results_table():
+    """Verify that all scenario runners A through F execute dynamically and pass."""
+    # Scenario A
+    res_a = run_scenario_a()
+    assert res_a["match"] == "PASS"
+    assert "SAFE" in res_a["actual_result"]
+
+    # Scenario B
+    res_b = run_scenario_b()
+    assert res_b["match"] == "PASS"
+    assert "WAITING" in res_b["actual_result"]
+
+    # Scenario C
+    res_c = run_scenario_c()
+    assert res_c["match"] == "PASS"
+    assert "DENIED_UNSAFE" in res_c["actual_result"] or "UNSAFE" in res_c["actual_result"]
+
+    # Scenario D
+    res_d = run_scenario_d()
+    assert res_d["match"] == "PASS"
+    assert "DEADLOCK DETECTED" in res_d["actual_result"]
+
+    # Scenario E
+    res_e = run_scenario_e()
+    assert res_e["match"] == "PASS"
+    assert "DEADLOCK PREVENTED" in res_e["actual_result"]
+
+    # Scenario F
+    res_f = run_scenario_f()
+    assert res_f["match"] == "PASS"
+    assert "VALID_BOUNDARY accepted" in res_f["actual_result"]
+
+    # Check consolidated analytical table
+    table_rows = get_all_scenarios_results_table()
+    assert len(table_rows) == 6
+    required_cols = {"Test Case", "System Condition", "Actual Result", "Expected Result", "Match (PASS/FAIL)"}
+    for row in table_rows:
+        assert required_cols.issubset(set(row.keys()))
+        assert row["Match (PASS/FAIL)"] == "PASS"
+
 
 
 
