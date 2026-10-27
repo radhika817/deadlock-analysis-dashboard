@@ -192,6 +192,40 @@ st.markdown("""
         color: #94A3B8;
         font-weight: 600;
     }
+
+    /* Preset Scenario Selector Styling */
+    .scenario-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.45rem;
+    }
+    .scenario-card-title {
+        font-size: 1.12rem;
+        font-weight: 700;
+        color: #F8FAFC;
+    }
+    .scenario-short-exp {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #93C5FD;
+        margin-bottom: 0.5rem;
+    }
+    .scenario-detail {
+        font-size: 0.85rem;
+        color: #94A3B8;
+        line-height: 1.45;
+        min-height: 48px;
+        margin-bottom: 0.75rem;
+    }
+    .scenario-detail strong {
+        color: #E2E8F0;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+        border-color: rgba(96, 165, 250, 0.45) !important;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+        transition: all 0.2s ease-in-out;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -310,6 +344,81 @@ TAB_TITLES = [
     "⚙️ Prevention & Recovery",
     "📊 Test Scenarios & Results Table"
 ]
+
+PRESET_SCENARIOS = {
+    "A": {
+        "id": "A",
+        "name": "A. Safe State",
+        "emoji": "🅰️",
+        "tag": "Safe State",
+        "badge_color": "#10B981",
+        "badge_bg": "rgba(16, 185, 129, 0.16)",
+        "badge_text": "Banker's Avoidance",
+        "short_desc": "Find a safe sequence using Banker's Algorithm.",
+        "test_explanation": "Evaluates whether the current resource allocation is in a safe state and calculates a valid safe execution sequence using Banker's Safety Algorithm.",
+        "target_tab": TAB_TITLES[0]
+    },
+    "B": {
+        "id": "B",
+        "name": "B. Insufficient Resources",
+        "emoji": "🅱️",
+        "tag": "Waiting / Deferred",
+        "badge_color": "#3B82F6",
+        "badge_bg": "rgba(59, 130, 246, 0.16)",
+        "badge_text": "Request Handling",
+        "short_desc": "Test a valid request that exceeds Available resources.",
+        "test_explanation": "Submits process P4's request of [3, 3, 0] which is within its Need [4, 3, 1] but exceeds Available [2, 3, 0], placing P4 in WAITING/DEFERRED state without altering allocation.",
+        "target_tab": TAB_TITLES[0]
+    },
+    "C": {
+        "id": "C",
+        "name": "C. Unsafe Resource Request",
+        "emoji": "🅲",
+        "tag": "Denied / Unsafe",
+        "badge_color": "#F97316",
+        "badge_bg": "rgba(249, 115, 22, 0.16)",
+        "badge_text": "Safety Rollback",
+        "short_desc": "Deny a request that would make the system unsafe.",
+        "test_explanation": "Submits process P0's request of [0, 2, 0] which is within Need and Available, but simulated allocation leaves the system unsafe. The request is DENIED and state is restored.",
+        "target_tab": TAB_TITLES[0]
+    },
+    "D": {
+        "id": "D",
+        "name": "D. Deadlock Detection",
+        "emoji": "🅳",
+        "tag": "Deadlock Detected",
+        "badge_color": "#EF4444",
+        "badge_bg": "rgba(239, 68, 68, 0.16)",
+        "badge_text": "Graph & Matrix Detection",
+        "short_desc": "Detect a deadlock and demonstrate recovery.",
+        "test_explanation": "Evaluates a deadlocked system using Wait-For Graph cycle detection for Single-Instance resources and Matrix Detection for Multiple-Instance resources, followed by victim recovery.",
+        "target_tab": TAB_TITLES[1]
+    },
+    "E": {
+        "id": "E",
+        "name": "E. Deadlock Prevention",
+        "emoji": "🅴",
+        "tag": "Prevention Policy",
+        "badge_color": "#10B981",
+        "badge_bg": "rgba(16, 185, 129, 0.16)",
+        "badge_text": "Design Constraints",
+        "short_desc": "Apply a prevention policy such as fixed resource ordering.",
+        "test_explanation": "Applies design-time prevention policies (Fixed Resource Ordering / Request-All-Upfront) to Scenario D to prove that eliminating Circular Wait makes deadlock impossible.",
+        "target_tab": TAB_TITLES[2]
+    },
+    "F": {
+        "id": "F",
+        "name": "F. Boundary & Invalid Inputs",
+        "emoji": "🅵",
+        "tag": "Validation Suite",
+        "badge_color": "#A855F7",
+        "badge_bg": "rgba(168, 85, 247, 0.16)",
+        "badge_text": "Robustness Checks",
+        "short_desc": "Test boundary cases and invalid inputs.",
+        "test_explanation": "Executes boundary tests (all-zero Available, zero Need) and validates rejection of invalid inputs (negative values, Alloc > Max, out-of-bounds process IDs, dimension mismatches).",
+        "target_tab": TAB_TITLES[3]
+    }
+}
 
 
 def apply_preset(preset_id: str, keep_tab: bool = False):
@@ -730,37 +839,33 @@ except Exception:
 
 # Presets in Sidebar
 st.sidebar.markdown("---")
-st.sidebar.subheader("Presets (Scenarios A - F)")
-col_p1, col_p2, col_p3 = st.sidebar.columns(3)
-col_p4, col_p5, col_p6 = st.sidebar.columns(3)
+st.sidebar.subheader("Presets (Scenarios A – F)")
 
-if col_p1.button("A: Safe", help="Classic Safe State (5 processes, 3 resources)"):
-    apply_preset("A")
-    st.rerun()
+preset_keys = ["A", "B", "C", "D", "E", "F"]
+preset_labels = [PRESET_SCENARIOS[k]["name"] for k in preset_keys]
+current_preset = st.session_state.get("active_preset", "A")
+current_idx = preset_keys.index(current_preset) if current_preset in preset_keys else 0
 
-if col_p2.button("B: Wait", help="Request > Available -> WAITING / DEFERRED"):
-    apply_preset("B")
-    st.rerun()
+selected_label = st.sidebar.selectbox(
+    "Select Scenario Preset",
+    preset_labels,
+    index=current_idx,
+    key="sidebar_preset_select",
+    help="Select a scenario to load its configuration and run tests."
+)
+selected_key = preset_keys[preset_labels.index(selected_label)]
+selected_info = PRESET_SCENARIOS[selected_key]
 
-if col_p3.button("C: Unsafe", help="Unsafe Request -> Denied & Restored"):
-    apply_preset("C")
-    st.rerun()
+st.sidebar.caption(f"🎯 **Goal:** {selected_info['short_desc']}")
+st.sidebar.caption(f"🔬 **What will be tested:** {selected_info['test_explanation']}")
 
-if col_p4.button("D: Detect", help="Deadlock Detection (Single & Multi-Instance)"):
-    apply_preset("D")
-    st.rerun()
-
-if col_p5.button("E: Prevent", help="Prevention Policies (Ordering & Upfront)"):
-    apply_preset("E")
-    st.rerun()
-
-if col_p6.button("F: Bound", help="Boundary & Invalid Inputs"):
-    apply_preset("F")
+if st.sidebar.button("Load Scenario", key="btn_sidebar_load_preset", type="primary", use_container_width=True):
+    apply_preset(selected_key)
     st.rerun()
 
 
 # ============================================================================
-# MAIN HEADER
+# MAIN HEADER & PRESET SCENARIO SELECTOR
 # ============================================================================
 
 st.markdown('<div class="main-title">Deadlock Analysis and Resource Allocation Dashboard</div>', unsafe_allow_html=True)
@@ -770,18 +875,62 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Active Preset Banner
-if st.session_state.active_preset:
-    preset_descriptions = {
-        "A": "Scenario A (Safe State): Classic textbook 5-process, 3-resource system in a proven safe state with a valid execution sequence.",
-        "B": "Scenario B (Request Exceeds Available): Process P4 requests [3, 3, 0]. Within Need [4, 3, 1] but exceeds Available [2, 3, 0] -> WAITING / DEFERRED (state strictly unchanged).",
-        "C": "Scenario C (Unsafe Request): Process P0 requests [0, 2, 0]. Within Need and Available, but simulated state is unsafe -> DENIED / UNSAFE (state restored).",
-        "D": "Scenario D (Deadlock Detection): Separate deadlocked scenario evaluated using Wait-For Graph cycle detection (Single-Instance) and Matrix Detection Algorithm (Multiple-Instance).",
-        "E": "Scenario E (Deadlock Prevention): Fixed Resource Ordering applied to Scenario D breaks circular wait and eliminates deadlock.",
-        "F": "Scenario F (Boundary Cases & Validation): Evaluates valid boundary conditions (Zero Available, Zero Need) and safely blocks invalid inputs."
-    }
-    desc = preset_descriptions.get(st.session_state.active_preset, f"Scenario {st.session_state.active_preset}")
-    st.info(f"📍 **Active Preset Loaded:** {desc} Edit values in the sidebar or switch presets anytime.")
+# Responsive Two-Column Card Layout for Preset Scenarios
+st.markdown("### 🎯 Presets (Scenarios A – F)")
+st.caption("Select a scenario below to explore Banker's safety check, request handling, deadlock detection, prevention policies, and boundary testing.")
+
+scenario_pairs = [("A", "B"), ("C", "D"), ("E", "F")]
+for id1, id2 in scenario_pairs:
+    col_c1, col_c2 = st.columns(2, gap="medium")
+    for col, sc_id in [(col_c1, id1), (col_c2, id2)]:
+        info = PRESET_SCENARIOS[sc_id]
+        is_active = (st.session_state.get("active_preset") == sc_id)
+        with col:
+            with st.container(border=True):
+                active_badge_html = (
+                    '<span style="background-color: rgba(59, 130, 246, 0.2); color: #60A5FA; '
+                    'border: 1px solid #3B82F6; font-size: 0.72rem; font-weight: 700; '
+                    'padding: 0.2rem 0.55rem; border-radius: 9999px;">CURRENTLY LOADED</span>'
+                    if is_active
+                    else f'<span style="background-color: {info["badge_bg"]}; color: {info["badge_color"]}; '
+                         f'border: 1px solid {info["badge_color"]}; font-size: 0.72rem; font-weight: 700; '
+                         f'padding: 0.2rem 0.55rem; border-radius: 9999px;">{info["badge_text"]}</span>'
+                )
+                st.markdown(f"""
+                <div class="scenario-card-header">
+                    <span class="scenario-card-title">{info['emoji']} {info['name']}</span>
+                    {active_badge_html}
+                </div>
+                <div class="scenario-short-exp">🎯 {info['short_desc']}</div>
+                <div class="scenario-detail">
+                    <strong>What will be tested:</strong> {info['test_explanation']}
+                </div>
+                """, unsafe_allow_html=True)
+                btn_label = "✓ Active Scenario (Reload)" if is_active else "Load Scenario"
+                btn_type = "primary" if is_active else "secondary"
+                if st.button(btn_label, key=f"btn_load_{sc_id.lower()}", type=btn_type, use_container_width=True, help=f"Load {info['name']}: {info['short_desc']}"):
+                    apply_preset(sc_id)
+                    st.rerun()
+
+# Confirmation Banner containing selected scenario name
+if st.session_state.get("active_preset") and st.session_state.active_preset in PRESET_SCENARIOS:
+    sc = PRESET_SCENARIOS[st.session_state.active_preset]
+    st.markdown(f"""
+    <div class="status-badge status-safe" style="border-left-color: {sc['badge_color']}; margin-top: 0.8rem; margin-bottom: 1.2rem;">
+        <span style="font-size: 1.4rem; line-height: 1.2;">✅</span>
+        <div style="flex: 1;">
+            <div style="color: #60A5FA; font-weight: 800; font-size: 1.05rem;">
+                Scenario Loaded: {sc['name']}
+            </div>
+            <div style="font-weight: 500; font-size: 0.95rem; margin-top: 0.2rem; color: #F8FAFC;">
+                {sc['short_desc']}
+            </div>
+            <div style="font-size: 0.85rem; margin-top: 0.25rem; color: #94A3B8;">
+                <strong>Active System State:</strong> {sc['test_explanation']}
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 if "main_tab" not in st.session_state or st.session_state.main_tab not in TAB_TITLES:
     st.session_state.main_tab = TAB_TITLES[0]

@@ -1035,16 +1035,17 @@ def test_streamlit_scenario_switching_and_distinct_results():
 
     # --- Test Scenario A ---
     at_a = AppTest.from_file("app.py").run()
-    btn_a = [b for b in at_a.sidebar.button if b.label == "A: Safe"][0]
+    btn_a = [b for b in at_a.button if b.key == "btn_load_a"][0]
     btn_a.click().run()
     assert at_a.session_state.active_preset == "A"
     assert at_a.session_state.main_tab == "🛡️ Deadlock Avoidance (Banker's)"
     assert at_a.session_state.last_safety_check["is_safe"] is True
     assert len(at_a.session_state.last_safety_check["safe_sequence"]) == 5
+    assert any("Scenario Loaded: A. Safe State" in m.value for m in at_a.markdown)
 
     # --- Test Scenario B ---
     at_b = AppTest.from_file("app.py").run()
-    btn_b = [b for b in at_b.sidebar.button if b.label == "B: Wait"][0]
+    btn_b = [b for b in at_b.button if b.key == "btn_load_b"][0]
     btn_b.click().run()
     assert at_b.session_state.active_preset == "B"
     assert at_b.session_state.main_tab == "🛡️ Deadlock Avoidance (Banker's)"
@@ -1056,10 +1057,11 @@ def test_streamlit_scenario_switching_and_distinct_results():
         at_b.session_state.last_request_outcome["before_allocation"],
         at_b.session_state.last_request_outcome["outcome"]["new_allocation"]
     )
+    assert any("Scenario Loaded: B. Insufficient Resources" in m.value for m in at_b.markdown)
 
     # --- Test Scenario C ---
     at_c = AppTest.from_file("app.py").run()
-    btn_c = [b for b in at_c.sidebar.button if b.label == "C: Unsafe"][0]
+    btn_c = [b for b in at_c.button if b.key == "btn_load_c"][0]
     btn_c.click().run()
     assert at_c.session_state.active_preset == "C"
     assert at_c.session_state.main_tab == "🛡️ Deadlock Avoidance (Banker's)"
@@ -1071,31 +1073,43 @@ def test_streamlit_scenario_switching_and_distinct_results():
         at_c.session_state.last_request_outcome["before_allocation"],
         at_c.session_state.last_request_outcome["outcome"]["new_allocation"]
     )
+    assert any("Scenario Loaded: C. Unsafe Resource Request" in m.value for m in at_c.markdown)
 
     # --- Test Scenario D ---
     at_d = AppTest.from_file("app.py").run()
-    btn_d = [b for b in at_d.sidebar.button if b.label == "D: Detect"][0]
+    btn_d = [b for b in at_d.button if b.key == "btn_load_d"][0]
     btn_d.click().run()
     assert at_d.session_state.active_preset == "D"
     assert at_d.session_state.main_tab == "🔍 Deadlock Detection"
     assert at_d.session_state.det_single_last_result["is_deadlocked"] is True
     assert at_d.session_state.det_multi_last_result["deadlock"] is True
+    assert any("Scenario Loaded: D. Deadlock Detection" in m.value for m in at_d.markdown)
 
     # --- Test Scenario E ---
     at_e = AppTest.from_file("app.py").run()
-    btn_e = [b for b in at_e.sidebar.button if b.label == "E: Prevent"][0]
+    btn_e = [b for b in at_e.button if b.key == "btn_load_e"][0]
     btn_e.click().run()
     assert at_e.session_state.active_preset == "E"
     assert at_e.session_state.main_tab == "⚙️ Prevention & Recovery"
     assert at_e.session_state.active_preset_run[1]["match"] == "PASS"
+    assert any("Scenario Loaded: E. Deadlock Prevention" in m.value for m in at_e.markdown)
 
     # --- Test Scenario F ---
     at_f = AppTest.from_file("app.py").run()
-    btn_f = [b for b in at_f.sidebar.button if b.label == "F: Bound"][0]
+    btn_f = [b for b in at_f.button if b.key == "btn_load_f"][0]
     btn_f.click().run()
     assert at_f.session_state.active_preset == "F"
     assert at_f.session_state.main_tab == "📊 Test Scenarios & Results Table"
     assert at_f.session_state.active_preset_run[1]["match"] == "PASS"
+    assert any("Scenario Loaded: F. Boundary & Invalid Inputs" in m.value for m in at_f.markdown)
+
+    # --- Test Sidebar Selectbox Selector ---
+    at_sb = AppTest.from_file("app.py").run()
+    at_sb.sidebar.selectbox[0].select("B. Insufficient Resources")
+    sb_btn = [b for b in at_sb.sidebar.button if b.key == "btn_sidebar_load_preset"][0]
+    sb_btn.click().run()
+    assert at_sb.session_state.active_preset == "B"
+    assert at_sb.session_state.last_request_outcome["outcome"]["status"] == "WAITING"
 
 
 
