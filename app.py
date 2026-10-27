@@ -41,6 +41,9 @@ from detection import (
 )
 from prevention import (
     get_coffman_conditions_summary,
+    get_coffman_breakdown,
+    simulate_prevention_single_instance,
+    simulate_prevention_multi_instance,
     evaluate_resource_ordering_prevention,
     evaluate_request_all_upfront_prevention
 )

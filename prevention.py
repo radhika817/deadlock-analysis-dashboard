@@ -363,13 +363,15 @@ def simulate_prevention_single_instance(
         waiting_processes = []
         simulation_log = []
 
+        running_batch = []
         for p in processes:
             needs = total_needed.get(p, [])
-            can_grant_all = all(r in available_pool for r in needs)
+            can_grant_all = all(available_pool.count(r) >= needs.count(r) for r in set(needs))
 
             if can_grant_all:
                 for r in needs:
                     available_pool.remove(r)
+                running_batch.append(p)
                 execution_order.append(p)
                 simulation_log.append({
                     "step": len(simulation_log) + 1,
@@ -380,9 +382,6 @@ def simulate_prevention_single_instance(
                     "note": f"Acquired all required resources {needs} atomically. Runs to completion.",
                     "available_after": available_pool.copy()
                 })
-                # Reclaim upon completion
-                for r in needs:
-                    available_pool.append(r)
             else:
                 waiting_processes.append(p)
                 simulation_log.append({
@@ -394,6 +393,11 @@ def simulate_prevention_single_instance(
                     "note": f"Cannot acquire all resources {needs} simultaneously. Allocated 0 resources while waiting.",
                     "available_after": available_pool.copy()
                 })
+
+        # Reclaim upon completion of running batch
+        for p in running_batch:
+            for r in total_needed.get(p, []):
+                available_pool.append(r)
 
         # Remaining waiting processes run in subsequent phase
         for p in waiting_processes:
@@ -619,7 +623,7 @@ def simulate_prevention_multi_instance(
             "violating_requests": violating_requests,
             "released_summary": released_summary,
             "post_detection_steps": mod_det["steps"],
-            "final_work": mod_det["work"].tolist(),
+            "final_work": mod_det["work"].tolist() if hasattr(mod_det["work"], "tolist") else list(mod_det["work"]),
             "tradeoffs": tradeoffs,
             "coffman_breakdown": get_coffman_breakdown("resource_ordering")
         }
