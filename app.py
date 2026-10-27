@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import io
 import json
+import matplotlib.pyplot as plt
 
 # Import algorithm logic modules
 from banker import (
@@ -104,85 +105,91 @@ st.markdown("""
     .main-title {
         font-size: 2.1rem;
         font-weight: 800;
-        background: linear-gradient(135deg, #1E3A8A 0%, #3B82F6 100%);
+        background: linear-gradient(135deg, #60A5FA 0%, #A78BFA 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         margin-bottom: 0.2rem;
     }
     .sub-title {
         font-size: 1.05rem;
-        color: #64748B;
+        color: #94A3B8;
         margin-bottom: 1.5rem;
     }
 
-    /* 5 DISTINCT STATUS BANNERS */
+    /* 5 DISTINCT STATUS BANNERS (Dark & Light friendly) */
     .status-badge {
-        padding: 0.85rem 1.25rem;
+        padding: 0.9rem 1.3rem;
         border-radius: 8px;
-        font-weight: 700;
-        font-size: 1.05rem;
+        font-size: 1.0rem;
         margin-bottom: 1rem;
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: 0.85rem;
+        backdrop-filter: blur(4px);
     }
     
     /* 1. SAFE (Green) */
     .status-safe {
-        background-color: #ECFDF5;
-        color: #065F46;
-        border: 2px solid #10B981;
+        background-color: rgba(16, 185, 129, 0.16);
+        color: #ECFDF5;
+        border: 1px solid rgba(16, 185, 129, 0.35);
+        border-left: 6px solid #10B981;
     }
     
     /* 2. UNSAFE (Orange) - NOT DEADLOCK */
     .status-unsafe {
-        background-color: #FFF7ED;
-        color: #9A3412;
-        border: 2px solid #EA580C;
+        background-color: rgba(249, 115, 22, 0.16);
+        color: #FFF7ED;
+        border: 1px solid rgba(249, 115, 22, 0.35);
+        border-left: 6px solid #F97316;
     }
     
     /* 3. WAITING / DEFERRED (Blue) */
     .status-waiting {
-        background-color: #EFF6FF;
-        color: #1E40AF;
-        border: 2px solid #3B82F6;
+        background-color: rgba(59, 130, 246, 0.16);
+        color: #EFF6FF;
+        border: 1px solid rgba(59, 130, 246, 0.35);
+        border-left: 6px solid #3B82F6;
     }
     
     /* 4. DEADLOCK DETECTED (Red) */
     .status-deadlock {
-        background-color: #FEF2F2;
-        color: #991B1B;
-        border: 2px solid #EF4444;
+        background-color: rgba(239, 68, 68, 0.18);
+        color: #FEF2F2;
+        border: 1px solid rgba(239, 68, 68, 0.4);
+        border-left: 6px solid #EF4444;
     }
     
-    /* 5. INVALID INPUT (Grey) */
+    /* 5. INVALID INPUT (Grey/Purple) */
     .status-invalid {
-        background-color: #F8FAFC;
-        color: #334155;
-        border: 2px solid #94A3B8;
+        background-color: rgba(168, 85, 247, 0.14);
+        color: #FAF5FF;
+        border: 1px solid rgba(168, 85, 247, 0.35);
+        border-left: 6px solid #A855F7;
     }
 
     /* Concept alert box */
     .concept-card {
-        background-color: #FFFBEB;
-        border: 2px solid #F59E0B;
-        border-left: 6px solid #D97706;
+        background-color: rgba(245, 158, 11, 0.12);
+        border: 1px solid rgba(245, 158, 11, 0.4);
+        border-left: 6px solid #F59E0B;
         padding: 1.1rem 1.4rem;
         border-radius: 8px;
         margin-top: 1rem;
         margin-bottom: 1.4rem;
         font-size: 0.95rem;
-        color: #78350F;
+        color: #F8FAFC;
     }
 
     .footer-note {
         margin-top: 3rem;
         padding: 1rem;
-        background-color: #F1F5F9;
+        background-color: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
         border-radius: 8px;
         text-align: center;
         font-size: 0.88rem;
-        color: #475569;
+        color: #94A3B8;
         font-weight: 600;
     }
 </style>
@@ -196,37 +203,43 @@ def render_status_banner(status_type: str, message: str, details: str = ""):
     2. UNSAFE (orange)
     3. WAITING/DEFERRED (blue)
     4. DEADLOCK DETECTED (red)
-    5. INVALID INPUT (grey)
+    5. INVALID INPUT (grey/purple)
+    Uses semi-transparent tinted backgrounds with a coloured left border, light text, and distinctive icons.
     """
     status_upper = status_type.upper().strip()
     if status_upper in ["SAFE", "GRANTED"]:
         css_class = "status-safe"
         icon = "🟢"
         title = "SAFE" if status_upper == "SAFE" else "SAFE (Request Granted)"
+        title_color = "#34D399"
     elif status_upper in ["UNSAFE", "DENIED_UNSAFE"]:
         css_class = "status-unsafe"
         icon = "🟠"
         title = "UNSAFE (Request Denied)" if status_upper == "DENIED_UNSAFE" else "UNSAFE (No Safe Sequence)"
+        title_color = "#FB923C"
     elif status_upper in ["WAITING", "WAITING / DEFERRED", "DEFERRED"]:
         css_class = "status-waiting"
         icon = "🔵"
         title = "WAITING / DEFERRED (Request Exceeds Available)"
+        title_color = "#60A5FA"
     elif "DEADLOCK" in status_upper:
         css_class = "status-deadlock"
         icon = "🔴"
         title = "DEADLOCK DETECTED"
+        title_color = "#F87171"
     else:  # INVALID, INVALID INPUT, EXCEEDS_NEED
         css_class = "status-invalid"
-        icon = "⚪"
+        icon = "🟣"
         title = "INVALID INPUT"
+        title_color = "#C084FC"
 
     st.markdown(f"""
     <div class="status-badge {css_class}">
-        <span style="font-size: 1.4rem;">{icon}</span>
-        <div>
-            <div><strong>{title}</strong></div>
-            <div style="font-weight: 500; font-size: 0.95rem; margin-top: 0.2rem;">{message}</div>
-            {f'<div style="font-size: 0.85rem; margin-top: 0.2rem; opacity: 0.9;">{details}</div>' if details else ''}
+        <span style="font-size: 1.4rem; line-height: 1.2;">{icon}</span>
+        <div style="flex: 1;">
+            <div style="color: {title_color}; font-weight: 800; font-size: 1.05rem;">{title}</div>
+            <div style="font-weight: 500; font-size: 0.95rem; margin-top: 0.25rem;">{message}</div>
+            {f'<div style="font-size: 0.85rem; margin-top: 0.25rem; opacity: 0.85;">{details}</div>' if details else ''}
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -236,7 +249,7 @@ def render_unsafe_concept_panel():
     """Renders the required educational panel titled 'Unsafe is NOT the same as Deadlock'."""
     st.markdown("""
     <div class="concept-card">
-        <h4 style="color: #9A3412; margin-top: 0; font-size: 1.15rem; display: flex; align-items: center; gap: 0.5rem;">
+        <h4 style="color: #FBBF24; margin-top: 0; font-size: 1.15rem; display: flex; align-items: center; gap: 0.5rem;">
             ⚠️ Unsafe is NOT the same as Deadlock
         </h4>
         <p style="margin-bottom: 0.6rem; line-height: 1.5;">
@@ -249,6 +262,27 @@ def render_unsafe_concept_panel():
         </p>
     </div>
     """, unsafe_allow_html=True)
+
+
+def make_figure_dark_friendly(fig: plt.Figure, bg_color: str = "#0E1117", card_bg: str = "#1A1F2B", text_color: str = "#FAFAFA") -> plt.Figure:
+    """
+    Styles a Matplotlib figure and its axes for seamless dark theme display.
+    Eliminates the bright white box background, colors titles & legends with light text,
+    and preserves high-contrast red deadlock cycle highlighting.
+    """
+    fig.patch.set_facecolor(bg_color)
+    for ax in fig.get_axes():
+        ax.set_facecolor(bg_color)
+        ax.title.set_color(text_color)
+        leg = ax.get_legend()
+        if leg:
+            leg.get_frame().set_facecolor(card_bg)
+            leg.get_frame().set_edgecolor("#334155")
+            for text in leg.get_texts():
+                text.set_color(text_color)
+        for spine in ax.spines.values():
+            spine.set_color(bg_color)
+    return fig
 
 
 # ============================================================================
@@ -303,6 +337,7 @@ initialize_session_state()
 
 st.sidebar.title("⚙️ System Configuration")
 st.sidebar.caption("Configure processes, resources, or edit matrices directly.")
+st.sidebar.info("🌓 Change theme anytime from the top-right menu: **Settings > Theme**.")
 
 # Reset Button
 if st.sidebar.button("🔄 Reset to Classic Example", type="secondary", use_container_width=True):
@@ -916,7 +951,7 @@ with tab_detection:
             # Draw Graphs using NetworkX + Matplotlib (highlighting cycle in red!)
             st.markdown("#### Graphical Visualization (RAG and WFG)")
             fig = draw_graphs_to_figure(det_res["rag"], det_res["wfg"], det_res["cycles"])
-            st.pyplot(fig)
+            st.pyplot(make_figure_dark_friendly(fig))
 
             # Single-Instance Recovery Section
             if det_res["is_deadlocked"]:
@@ -968,7 +1003,7 @@ with tab_detection:
                         rec_res["new_cycles"],
                         title_suffix="(Post-Recovery: Cycle Broken)"
                     )
-                    st.pyplot(fig_post)
+                    st.pyplot(make_figure_dark_friendly(fig_post))
 
     else:
         # Multiple-Instance Model
@@ -978,10 +1013,10 @@ with tab_detection:
         # PROMINENT SHORT NOTE & EXPLANATION CARD
         st.markdown("""
         <div class="concept-card">
-            <h4 style="color: #9A3412; margin-top: 0; font-size: 1.12rem; display: flex; align-items: center; gap: 0.5rem;">
+            <h4 style="color: #FBBF24; margin-top: 0; font-size: 1.12rem; display: flex; align-items: center; gap: 0.5rem;">
                 💡 Crucial Theorem: Multiple-Instance Resource Detection
             </h4>
-            <p style="font-weight: 700; color: #9A3412; font-size: 1.05rem; margin-bottom: 0.5rem;">
+            <p style="font-weight: 700; color: #FCD34D; font-size: 1.05rem; margin-bottom: 0.5rem;">
                 "A cycle alone is not conclusive proof of deadlock for multiple-instance resources."
             </p>
             <div style="font-size: 0.93rem; line-height: 1.55;">
@@ -1273,24 +1308,24 @@ with tab_prevention:
         with cols_coff[idx]:
             if cb["is_eliminated"]:
                 st.markdown(f"""
-                <div style="background-color: #FEF2F2; border: 2px solid #EF4444; border-radius: 8px; padding: 0.85rem; height: 100%;">
-                    <div style="font-weight: 800; color: #991B1B; font-size: 1.0rem; margin-bottom: 0.35rem;">{cb['name']}</div>
+                <div style="background-color: rgba(239, 68, 68, 0.16); border: 1px solid rgba(239, 68, 68, 0.4); border-left: 5px solid #EF4444; border-radius: 8px; padding: 0.85rem; height: 100%;">
+                    <div style="font-weight: 800; color: #F87171; font-size: 1.0rem; margin-bottom: 0.35rem;">{cb['name']}</div>
                     <span style="background-color: #EF4444; color: white; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.78rem;">
                         🚫 ELIMINATED BY POLICY
                     </span>
-                    <div style="font-size: 0.84rem; color: #7F1D1D; margin-top: 0.5rem; line-height: 1.4;">
+                    <div style="font-size: 0.84rem; color: #F1F5F9; margin-top: 0.5rem; line-height: 1.4;">
                         <strong>{cb['summary']}</strong><br>{cb['explanation']}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
             else:
                 st.markdown(f"""
-                <div style="background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 8px; padding: 0.85rem; height: 100%;">
-                    <div style="font-weight: 700; color: #1E293B; font-size: 1.0rem; margin-bottom: 0.35rem;">{cb['name']}</div>
-                    <span style="background-color: #64748B; color: white; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.78rem;">
+                <div style="background-color: rgba(148, 163, 184, 0.12); border: 1px solid rgba(148, 163, 184, 0.35); border-left: 5px solid #64748B; border-radius: 8px; padding: 0.85rem; height: 100%;">
+                    <div style="font-weight: 700; color: #E2E8F0; font-size: 1.0rem; margin-bottom: 0.35rem;">{cb['name']}</div>
+                    <span style="background-color: #475569; color: white; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.78rem;">
                         {cb['status']}
                     </span>
-                    <div style="font-size: 0.84rem; color: #475569; margin-top: 0.5rem; line-height: 1.4;">
+                    <div style="font-size: 0.84rem; color: #CBD5E1; margin-top: 0.5rem; line-height: 1.4;">
                         <strong>{cb['summary']}</strong><br>{cb['explanation']}
                     </div>
                 </div>
@@ -1463,10 +1498,10 @@ with tab_prevention:
     with col_t1:
         u = tradeoffs["resource_utilization"]
         st.markdown(f"""
-        <div style="background-color: #FEF3C7; border: 2px solid #F59E0B; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <div style="font-weight: 700; color: #92400E; font-size: 1.05rem; margin-bottom: 0.35rem;">📉 {u['title']}</div>
-            <div style="font-size: 1.3rem; font-weight: 800; color: #B45309; margin-bottom: 0.35rem;">{u['metric_value']}</div>
-            <div style="font-size: 0.88rem; color: #78350F; line-height: 1.45;">
+        <div style="background-color: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.4); border-left: 5px solid #F59E0B; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="font-weight: 700; color: #FBBF24; font-size: 1.05rem; margin-bottom: 0.35rem;">📉 {u['title']}</div>
+            <div style="font-size: 1.3rem; font-weight: 800; color: #FCD34D; margin-bottom: 0.35rem;">{u['metric_value']}</div>
+            <div style="font-size: 0.88rem; color: #F1F5F9; line-height: 1.45;">
                 {u['explanation']}<br>
                 <strong>Scenario Metric:</strong> <code>{u['calculation']}</code>
             </div>
@@ -1476,10 +1511,10 @@ with tab_prevention:
     with col_t2:
         c = tradeoffs["reduced_concurrency"]
         st.markdown(f"""
-        <div style="background-color: #EFF6FF; border: 2px solid #3B82F6; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <div style="font-weight: 700; color: #1E40AF; font-size: 1.05rem; margin-bottom: 0.35rem;">⚡ {c['title']}</div>
-            <div style="font-size: 1.3rem; font-weight: 800; color: #1D4ED8; margin-bottom: 0.35rem;">{c['metric_value']}</div>
-            <div style="font-size: 0.88rem; color: #1E3A8A; line-height: 1.45;">
+        <div style="background-color: rgba(59, 130, 246, 0.14); border: 1px solid rgba(59, 130, 246, 0.4); border-left: 5px solid #3B82F6; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="font-weight: 700; color: #60A5FA; font-size: 1.05rem; margin-bottom: 0.35rem;">⚡ {c['title']}</div>
+            <div style="font-size: 1.3rem; font-weight: 800; color: #93C5FD; margin-bottom: 0.35rem;">{c['metric_value']}</div>
+            <div style="font-size: 0.88rem; color: #F1F5F9; line-height: 1.45;">
                 {c['explanation']}<br>
                 <strong>Scenario Metric:</strong> <code>{c['calculation']}</code>
             </div>
@@ -1489,10 +1524,10 @@ with tab_prevention:
     with col_t3:
         s = tradeoffs["starvation_risk"]
         st.markdown(f"""
-        <div style="background-color: #FFF1F2; border: 2px solid #F43F5E; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <div style="font-weight: 700; color: #9F1239; font-size: 1.05rem; margin-bottom: 0.35rem;">⚠️ {s['title']}</div>
-            <div style="font-size: 1.3rem; font-weight: 800; color: #BE123C; margin-bottom: 0.35rem;">{s['metric_value']}</div>
-            <div style="font-size: 0.88rem; color: #881337; line-height: 1.45;">
+        <div style="background-color: rgba(244, 63, 94, 0.14); border: 1px solid rgba(244, 63, 94, 0.4); border-left: 5px solid #F43F5E; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="font-weight: 700; color: #FB7185; font-size: 1.05rem; margin-bottom: 0.35rem;">⚠️ {s['title']}</div>
+            <div style="font-size: 1.3rem; font-weight: 800; color: #FDA4AF; margin-bottom: 0.35rem;">{s['metric_value']}</div>
+            <div style="font-size: 0.88rem; color: #F1F5F9; line-height: 1.45;">
                 {s['explanation']}<br>
                 <strong>Scenario Impact:</strong> <code>{s['impact']}</code>
             </div>
@@ -1502,10 +1537,10 @@ with tab_prevention:
     with col_t4:
         w = tradeoffs["longer_waiting"]
         st.markdown(f"""
-        <div style="background-color: #F5F3FF; border: 2px solid #8B5CF6; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <div style="font-weight: 700; color: #5B21B6; font-size: 1.05rem; margin-bottom: 0.35rem;">⏳ {w['title']}</div>
-            <div style="font-size: 1.3rem; font-weight: 800; color: #6D28D9; margin-bottom: 0.35rem;">{w['metric_value']}</div>
-            <div style="font-size: 0.88rem; color: #4C1D95; line-height: 1.45;">
+        <div style="background-color: rgba(139, 92, 246, 0.14); border: 1px solid rgba(139, 92, 246, 0.4); border-left: 5px solid #8B5CF6; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="font-weight: 700; color: #A78BFA; font-size: 1.05rem; margin-bottom: 0.35rem;">⏳ {w['title']}</div>
+            <div style="font-size: 1.3rem; font-weight: 800; color: #C4B5FD; margin-bottom: 0.35rem;">{w['metric_value']}</div>
+            <div style="font-size: 0.88rem; color: #F1F5F9; line-height: 1.45;">
                 {w['explanation']}<br>
                 <strong>Scenario Metric:</strong> <code>{w['calculation']}</code>
             </div>
