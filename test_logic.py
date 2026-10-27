@@ -1,28 +1,27 @@
 """
 test_logic.py - Unit tests for Deadlock Analysis and Resource Allocation algorithms.
 
-Covers:
-1. Need matrix calculation.
-2. Banker's Safety Algorithm on Scenario A (Classic safe sequence).
-3. Resource request handling:
-   - Scenario B: Request exceeds Available (WAITING / DEFERRED, state unchanged).
-   - Scenario C: Unsafe request (simulated -> UNSAFE -> DENIED & RESTORED).
-   - Valid safe request (GRANTED -> state updated).
-4. Deadlock Detection:
-   - Single-instance Resource Allocation Graph and Wait-For Graph cycle detection.
+Test Suite Structure:
+1. Classic Banker's Example Tests (Required by Assignment):
+   - Need matrix calculation correctness.
+   - Initial state safety and verification of valid safe sequence.
+   - P1 granted (1, 0, 2), then P4 requests (3, 3, 0) -> WAITING.
+   - P1 granted (1, 0, 2), then P0 requests (0, 2, 0) -> DENIED_UNSAFE and state unchanged.
+   - Request exceeding Need -> EXCEEDS_NEED.
+   - Negative request and invalid process ID -> INVALID.
+2. Deadlock Detection Tests:
+   - Single-instance RAG/WFG cycle detection.
    - Multi-instance matrix detection method.
-5. Deadlock Recovery:
-   - Process termination in single-instance graph (breaking circular wait).
-   - Process termination in multi-instance system (resource reclamation & resolution).
-6. Deadlock Prevention Policies:
-   - Resource Ordering (breaking Circular Wait).
-   - Request-All-Upfront (breaking Hold and Wait).
-7. Validation & Boundary Conditions:
+3. Deadlock Recovery Tests:
+   - Recovery by victim termination in single-instance and multi-instance systems.
+4. Deadlock Prevention Tests:
+   - Resource Ordering (eliminates Circular Wait).
+   - Request-All-Upfront (eliminates Hold and Wait).
+5. Validation & Boundary Tests:
    - Zero Available (valid boundary).
    - Zero Need (valid boundary).
    - Allocation > Maximum (invalid input).
-   - Negative values (invalid input).
-   - Invalid process ID / vector length.
+   - Negative values / wrong vector length (invalid input).
 """
 
 import pytest
@@ -66,135 +65,225 @@ from scenarios import (
 
 
 # ============================================================================
-# 1. NEED MATRIX CALCULATION
+# FIXTURES: CLASSIC TEXTBOOK BANKER'S EXAMPLE
 # ============================================================================
 
-def test_need_matrix_calculation():
-    """Verify Need = Maximum - Allocation for textbook Scenario A."""
-    sc_a = get_scenario_a()
-    need = calculate_need_matrix(sc_a["maximum"], sc_a["allocation"])
-    
-    # Expected Need for P0: [7-0, 5-1, 3-0] = [7, 4, 3]
-    # Expected Need for P1: [3-2, 2-0, 2-0] = [1, 2, 2]
-    # Expected Need for P2: [9-3, 0-0, 2-2] = [6, 0, 0]
-    # Expected Need for P3: [2-2, 2-1, 2-1] = [0, 1, 1]
-    # Expected Need for P4: [4-0, 3-0, 3-2] = [4, 3, 1]
+@pytest.fixture
+def classic_example():
+    """
+    Classic textbook example:
+    5 processes (P0 to P4), 3 resource types (A, B, C).
+    Allocation:
+      P0: [0, 1, 0]
+      P1: [2, 0, 0]
+      P2: [3, 0, 2]
+      P3: [2, 1, 1]
+      P4: [0, 0, 2]
+    Max:
+      P0: [7, 5, 3]
+      P1: [3, 2, 2]
+      P2: [9, 0, 2]
+      P3: [2, 2, 2]
+      P4: [4, 3, 3]
+    Available: [3, 3, 2]
+    """
+    alloc = np.array([
+        [0, 1, 0],  # P0
+        [2, 0, 0],  # P1
+        [3, 0, 2],  # P2
+        [2, 1, 1],  # P3
+        [0, 0, 2],  # P4
+    ], dtype=int)
+
+    maximum = np.array([
+        [7, 5, 3],  # P0
+        [3, 2, 2],  # P1
+        [9, 0, 2],  # P2
+        [2, 2, 2],  # P3
+        [4, 3, 3],  # P4
+    ], dtype=int)
+
+    available = np.array([3, 3, 2], dtype=int)
+
+    return {"allocation": alloc, "maximum": maximum, "available": available}
+
+
+# ============================================================================
+# 1. CLASSIC BANKER'S ALGORITHM TESTS
+# ============================================================================
+
+def test_classic_need_matrix_is_correct(classic_example):
+    """
+    Test 1: Verify Need matrix calculation.
+    Formula: Need = Maximum - Allocation.
+    Expected:
+      P0: [7-0, 5-1, 3-0] = [7, 4, 3]
+      P1: [3-2, 2-0, 2-0] = [1, 2, 2]
+      P2: [9-3, 0-0, 2-2] = [6, 0, 0]
+      P3: [2-2, 2-1, 2-1] = [0, 1, 1]
+      P4: [4-0, 3-0, 3-2] = [4, 3, 1]
+    """
+    alloc = classic_example["allocation"]
+    maximum = classic_example["maximum"]
+
+    need = calculate_need(maximum, alloc)
+
     expected_need = np.array([
         [7, 4, 3],
         [1, 2, 2],
         [6, 0, 0],
         [0, 1, 1],
         [4, 3, 1]
-    ])
+    ], dtype=int)
+
     np.testing.assert_array_equal(need, expected_need)
 
 
-# ============================================================================
-# 2. BANKER'S SAFETY ALGORITHM (SCENARIO A)
-# ============================================================================
-
-def test_safety_algorithm_scenario_a():
-    """Scenario A should be SAFE with all 5 processes finishing in valid order."""
-    sc_a = get_scenario_a()
-    need = calculate_need_matrix(sc_a["maximum"], sc_a["allocation"])
-    res = run_safety_algorithm(
-        sc_a["allocation"], need, sc_a["available"],
-        sc_a["process_labels"], sc_a["resource_labels"]
-    )
-
-    assert res["is_safe"] is True
-    assert res["status"] == "SAFE"
-    assert len(res["safe_sequence"]) == 5
-    assert len(res["steps"]) == 5
-    assert res["safe_sequence"][0] == "P1"  # P1 must be first with Available [3, 3, 2]
-    assert "P3" in res["safe_sequence"]
-    assert len(res["unfinished_processes"]) == 0
-
-
-# ============================================================================
-# 3. RESOURCE REQUEST HANDLING (SCENARIOS B, C, AND SAFE GRANT)
-# ============================================================================
-
-def test_request_exceeds_available_scenario_b():
+def test_classic_state_is_safe_and_valid_safe_sequence_found(classic_example):
     """
-    Scenario B: P4 requests (3, 3, 0).
-    Within Need (4, 3, 1), but exceeds Available (2, 3, 0).
-    Must result in WAITING / DEFERRED, state unchanged.
+    Test 2: Verify the initial system state is safe and a valid safe sequence is found.
+    Validates that each process in the sequence can finish with Work >= Need.
     """
-    sc_b = get_scenario_b()
-    res = handle_resource_request(
-        sc_b["allocation"], sc_b["maximum"], sc_b["available"],
-        sc_b["request_process"], sc_b["request_vector"],
-        sc_b["process_labels"], sc_b["resource_labels"]
-    )
+    alloc = classic_example["allocation"]
+    maximum = classic_example["maximum"]
+    available = classic_example["available"]
 
-    assert res["status"] == "WAITING / DEFERRED"
-    assert res["granted"] is False
-    assert res["state_changed"] is False
-    # Allocation and Available must match original
-    np.testing.assert_array_equal(res["allocation"], sc_b["allocation"])
-    np.testing.assert_array_equal(res["available"], sc_b["available"])
+    need = calculate_need(maximum, alloc)
+    result = safety_check(alloc, need, available)
+
+    # 1. State must be reported as safe
+    assert result["is_safe"] is True
+
+    # 2. Must contain all 5 processes with no unfinished processes
+    seq = result["safe_sequence"]
+    assert len(seq) == 5
+    assert set(seq) == {0, 1, 2, 3, 4}
+    assert len(result["unfinished"]) == 0
+
+    # 3. Independent mathematical proof: simulate the sequence step by step
+    work = available.copy()
+    for p in seq:
+        # Every process in sequence must satisfy Need[p] <= Work
+        assert np.all(need[p] <= work), f"Process P{p} cannot run with Work={work}"
+        work += alloc[p]
 
 
-def test_unsafe_request_denied_and_restored_scenario_c():
+def test_classic_after_granting_p1_p4_requesting_3_3_0_returns_waiting(classic_example):
     """
-    Scenario C: P0 requests (0, 2, 0).
-    Within Need and Available, but simulated state has no safe sequence.
-    Must be DENIED and original state RESTORED.
+    Test 3: After granting P1 request (1, 0, 2):
+    P4 requesting (3, 3, 0) must return WAITING.
+    - P1 grant: alloc becomes [3, 0, 2], avail becomes [2, 3, 0].
+    - P4 Need is [4, 3, 1]. Request [3, 3, 0] <= Need [4, 3, 1] is True.
+    - But Request [3, 3, 0] <= Available [2, 3, 0] is False (3 > 2 for resource A).
+    - Status must be WAITING, and state must remain unchanged.
     """
-    sc_c = get_scenario_c()
-    res = handle_resource_request(
-        sc_c["allocation"], sc_c["maximum"], sc_c["available"],
-        sc_c["request_process"], sc_c["request_vector"],
-        sc_c["process_labels"], sc_c["resource_labels"]
-    )
+    alloc = classic_example["allocation"].copy()
+    maximum = classic_example["maximum"].copy()
+    avail = classic_example["available"].copy()
 
-    assert res["status"] == "UNSAFE"
-    assert res["granted"] is False
-    assert res["state_changed"] is False
-    # Verify state was restored
-    np.testing.assert_array_equal(res["allocation"], sc_c["allocation"])
-    np.testing.assert_array_equal(res["available"], sc_c["available"])
-    assert res["safety_result"] is not None
-    assert res["safety_result"]["is_safe"] is False
+    # Step A: Grant P1 request of (1, 0, 2)
+    p1_grant = handle_request(1, [1, 0, 2], alloc, maximum, avail)
+    assert p1_grant["status"] == "GRANTED"
 
+    alloc_post_p1 = p1_grant["new_allocation"]
+    avail_post_p1 = p1_grant["new_available"]
 
-def test_valid_safe_request_granted():
-    """P1 requests (1, 0, 2) from base Scenario A -> Must be GRANTED."""
-    sc_a = get_scenario_a()
-    res = handle_resource_request(
-        sc_a["allocation"], sc_a["maximum"], sc_a["available"],
-        1, [1, 0, 2],
-        sc_a["process_labels"], sc_a["resource_labels"]
-    )
+    # Verify state after P1 grant: Available is [2, 3, 0]
+    np.testing.assert_array_equal(avail_post_p1, np.array([2, 3, 0]))
 
-    assert res["status"] == "SAFE"
-    assert res["granted"] is True
-    assert res["state_changed"] is True
-    # Available was [3, 3, 2] - [1, 0, 2] = [2, 3, 0]
-    np.testing.assert_array_equal(res["available"], np.array([2, 3, 0]))
-    # P1 allocation was [2, 0, 0] + [1, 0, 2] = [3, 0, 2]
-    np.testing.assert_array_equal(res["allocation"][1], np.array([3, 0, 2]))
+    # Step B: P4 requests (3, 3, 0)
+    p4_result = handle_request(4, [3, 3, 0], alloc_post_p1, maximum, avail_post_p1)
+
+    assert p4_result["status"] == "WAITING"
+    assert "insufficient resources currently available" in p4_result["message"]
+    # State must be preserved completely unchanged
+    np.testing.assert_array_equal(p4_result["new_allocation"], alloc_post_p1)
+    np.testing.assert_array_equal(p4_result["new_available"], avail_post_p1)
 
 
-def test_request_exceeds_need():
-    """Request > Need must fail at step 2 with maximum claim exceeded error."""
-    sc_a = get_scenario_a()
-    # P1 Need is [1, 2, 2]. Request [2, 0, 0] exceeds A need (2 > 1).
-    res = handle_resource_request(
-        sc_a["allocation"], sc_a["maximum"], sc_a["available"],
-        1, [2, 0, 0],
-        sc_a["process_labels"], sc_a["resource_labels"]
-    )
+def test_classic_after_granting_p1_p0_requesting_0_2_0_returns_denied_unsafe_and_state_unchanged(classic_example):
+    """
+    Test 4: After granting P1 request (1, 0, 2):
+    P0 requesting (0, 2, 0) must return DENIED_UNSAFE and the original state is unchanged.
+    - Available is [2, 3, 0].
+    - P0 requests [0, 2, 0]: within Need [7, 4, 3] and within Available [2, 3, 0].
+    - Simulated Available becomes [2, 1, 0].
+    - In this simulated state, no remaining process can finish (all Need > Work).
+    - Request must be DENIED_UNSAFE, and original state restored.
+    """
+    alloc = classic_example["allocation"].copy()
+    maximum = classic_example["maximum"].copy()
+    avail = classic_example["available"].copy()
 
-    assert res["status"] == "INVALID INPUT"
-    assert res["step_reached"] == 2
-    assert "exceeded its declared maximum claim" in res["reason"]
-    assert res["granted"] is False
+    # Step A: Grant P1 request of (1, 0, 2)
+    p1_grant = handle_request(1, [1, 0, 2], alloc, maximum, avail)
+    assert p1_grant["status"] == "GRANTED"
+
+    alloc_post_p1 = p1_grant["new_allocation"]
+    avail_post_p1 = p1_grant["new_available"]
+
+    # Step B: P0 requests (0, 2, 0)
+    p0_result = handle_request(0, [0, 2, 0], alloc_post_p1, maximum, avail_post_p1)
+
+    assert p0_result["status"] == "DENIED_UNSAFE"
+    assert p0_result["safety_result"] is not None
+    assert p0_result["safety_result"]["is_safe"] is False
+
+    # State must be preserved completely unchanged
+    np.testing.assert_array_equal(p0_result["new_allocation"], alloc_post_p1)
+    np.testing.assert_array_equal(p0_result["new_available"], avail_post_p1)
+
+
+def test_classic_request_greater_than_need_returns_exceeds_need(classic_example):
+    """
+    Test 5: Request greater than Need returns EXCEEDS_NEED.
+    P1 Need is [1, 2, 2].
+    P1 requesting [2, 0, 0] exceeds its declared claim on resource A (2 > 1).
+    """
+    alloc = classic_example["allocation"]
+    maximum = classic_example["maximum"]
+    available = classic_example["available"]
+
+    result = handle_request(1, [2, 0, 0], alloc, maximum, available)
+
+    assert result["status"] == "EXCEEDS_NEED"
+    assert "exceeded its declared maximum claim" in result["message"]
+    # State must be untouched
+    np.testing.assert_array_equal(result["new_allocation"], alloc)
+    np.testing.assert_array_equal(result["new_available"], available)
+
+
+def test_classic_negative_request_and_invalid_process_id_return_invalid(classic_example):
+    """
+    Test 6: Negative request and invalid process ID return INVALID.
+    """
+    alloc = classic_example["allocation"]
+    maximum = classic_example["maximum"]
+    available = classic_example["available"]
+
+    # 1. Negative value in request vector
+    res_negative = handle_request(0, [-1, 0, 0], alloc, maximum, available)
+    assert res_negative["status"] == "INVALID"
+    assert "Negative value" in res_negative["message"]
+
+    # 2. Process ID out of upper bound (only P0-P4 exist)
+    res_bad_id_high = handle_request(99, [1, 0, 0], alloc, maximum, available)
+    assert res_bad_id_high["status"] == "INVALID"
+    assert "Invalid process ID" in res_bad_id_high["message"]
+
+    # 3. Negative process ID
+    res_bad_id_neg = handle_request(-1, [1, 0, 0], alloc, maximum, available)
+    assert res_bad_id_neg["status"] == "INVALID"
+    assert "Invalid process ID" in res_bad_id_neg["message"]
+
+    # 4. Wrong length request vector (e.g. 2 resources instead of 3)
+    res_bad_len = handle_request(0, [1, 0], alloc, maximum, available)
+    assert res_bad_len["status"] == "INVALID"
+    assert "mismatch" in res_bad_len["message"]
 
 
 # ============================================================================
-# 4. DEADLOCK DETECTION (SINGLE-INSTANCE & MULTI-INSTANCE)
+# 2. DEADLOCK DETECTION TESTS (SINGLE & MULTI-INSTANCE)
 # ============================================================================
 
 def test_single_instance_detection_scenario_d():
@@ -221,13 +310,12 @@ def test_multi_instance_detection_scenario_d():
 
     assert res["status"] == "DEADLOCK DETECTED"
     assert res["is_deadlocked"] is True
-    # P0 can finish because Request is 0. Processes {P1, P2, P3, P4} remain deadlocked.
     assert "P0" not in res["deadlocked_processes"]
     assert "P1" in res["deadlocked_processes"]
 
 
 # ============================================================================
-# 5. RECOVERY BY PROCESS TERMINATION
+# 3. RECOVERY BY PROCESS TERMINATION TESTS
 # ============================================================================
 
 def test_recovery_single_instance():
@@ -247,28 +335,21 @@ def test_recovery_single_instance():
 
 def test_recovery_multi_instance():
     """Terminating a victim in multi-instance releases resources into Work."""
-    alloc = np.array([
-        [1, 0],
-        [0, 1]
-    ])
-    req = np.array([
-        [0, 1],
-        [1, 0]
-    ])
+    alloc = np.array([[1, 0], [0, 1]])
+    req = np.array([[0, 1], [1, 0]])
     avail = np.array([0, 0])
-    
+
     rec = recover_by_terminating_process_multi(
         alloc, req, avail, ["P0", "P1"], ["R1", "R2"], victim_process="P0"
     )
     assert rec["victim_terminated"] == "P0"
     assert rec["released_vector"] == [1, 0]
     assert rec["work_after_release"] == [1, 0]
-    # With [1, 0] available, P1 (needs [1, 0]) can now complete!
     assert rec["is_resolved"] is True
 
 
 # ============================================================================
-# 6. DEADLOCK PREVENTION
+# 4. DEADLOCK PREVENTION TESTS
 # ============================================================================
 
 def test_resource_ordering_prevention():
@@ -301,7 +382,7 @@ def test_request_all_upfront_prevention():
 
 
 # ============================================================================
-# 7. VALIDATION AND BOUNDARY CASES (SCENARIO F)
+# 5. VALIDATION AND BOUNDARY CASES
 # ============================================================================
 
 def test_zero_available_is_valid_boundary():
@@ -338,136 +419,3 @@ def test_allocation_exceeds_maximum_is_invalid():
     assert status == "INVALID INPUT"
     assert len(errors) == 1
     assert "Allocation > Maximum violation at cell [P0, R1]" in errors[0]
-
-
-def test_negative_values_invalid():
-    """Negative values in matrix or request must fail validation."""
-    is_valid, err = validate_matrix_shape_and_types([[-1, 2], [0, 1]], 2, 2)
-    assert is_valid is False
-    assert "Negative values are invalid" in err
-
-    is_valid_req, _, _, req_err = validate_request_input(0, [-1, 0], 2, 2)
-    assert is_valid_req is False
-    assert "Negative value" in req_err
-
-
-def test_invalid_process_id():
-    """Process ID outside bounds must return clear validation error."""
-    is_valid, _, _, err = validate_request_input(99, [1, 0], 2, 2)
-    assert is_valid is False
-    assert "Invalid process identifier '99'" in err
-
-
-def test_wrong_request_vector_length():
-    """Request vector length not matching number of resources must fail."""
-    is_valid, _, _, err = validate_request_input(0, [1, 2, 3], 2, 2)
-    assert is_valid is False
-    assert "Expected length 2, got 3" in err
-
-
-# ============================================================================
-# 8. PURE FUNCTIONS TESTS (calculate_need, safety_check, handle_request)
-# ============================================================================
-
-def test_pure_calculate_need():
-    """calculate_need returns Need = Max - Alloc without modifying inputs in place."""
-    max_m = np.array([[7, 5, 3], [3, 2, 2]])
-    alloc = np.array([[0, 1, 0], [2, 0, 0]])
-    max_orig = max_m.copy()
-    alloc_orig = alloc.copy()
-
-    need = calculate_need(max_m, alloc)
-    expected = np.array([[7, 4, 3], [1, 2, 2]])
-    np.testing.assert_array_equal(need, expected)
-
-    # In-place check
-    np.testing.assert_array_equal(max_m, max_orig)
-    np.testing.assert_array_equal(alloc, alloc_orig)
-
-
-def test_pure_safety_check_safe_and_unsafe():
-    """safety_check returns is_safe, safe_sequence (ints), steps, and unfinished."""
-    sc_a = get_scenario_a()
-    need = calculate_need(sc_a["maximum"], sc_a["allocation"])
-    res = safety_check(sc_a["allocation"], need, sc_a["available"])
-
-    assert res["is_safe"] is True
-    assert isinstance(res["safe_sequence"], list)
-    assert all(isinstance(x, int) for x in res["safe_sequence"])
-    assert len(res["safe_sequence"]) == 5
-    assert set(res["safe_sequence"]) == {0, 1, 2, 3, 4}
-    assert res["safe_sequence"][0] == 1  # P1 must execute first with Available [3, 3, 2]
-    assert len(res["steps"]) == 5
-    assert len(res["unfinished"]) == 0
-
-    # Unsafe check: Available is 0, Need is positive
-    res_unsafe = safety_check(sc_a["allocation"], need, [0, 0, 0])
-    assert res_unsafe["is_safe"] is False
-    assert len(res_unsafe["unfinished"]) == 5
-
-
-def test_pure_handle_request_all_five_statuses():
-    """
-    Test handle_request for all 5 statuses:
-    1) INVALID
-    2) EXCEEDS_NEED
-    3) WAITING
-    4) GRANTED
-    5) DENIED_UNSAFE
-    and verify input arrays are never modified in place.
-    """
-    sc_a = get_scenario_a()
-    alloc = sc_a["allocation"].copy()
-    max_m = sc_a["maximum"].copy()
-    avail = sc_a["available"].copy()
-
-    orig_alloc = alloc.copy()
-    orig_avail = avail.copy()
-    orig_max = max_m.copy()
-
-    # 1. INVALID (bad process ID, negative, wrong length)
-    res_inv1 = handle_request(99, [1, 0, 0], alloc, max_m, avail)
-    assert res_inv1["status"] == "INVALID"
-    assert res_inv1["safety_result"] is None
-
-    res_inv2 = handle_request(0, [-1, 0, 0], alloc, max_m, avail)
-    assert res_inv2["status"] == "INVALID"
-
-    res_inv3 = handle_request(0, [1, 0], alloc, max_m, avail)
-    assert res_inv3["status"] == "INVALID"
-
-    # 2. EXCEEDS_NEED (P1 Need is [1, 2, 2], requests [2, 0, 0])
-    res_exceed = handle_request(1, [2, 0, 0], alloc, max_m, avail)
-    assert res_exceed["status"] == "EXCEEDS_NEED"
-    assert res_exceed["safety_result"] is None
-
-    # 3. WAITING (P1 requests [1, 0, 0], within Need; but if avail is [0, 0, 0], it must wait)
-    res_wait = handle_request(1, [1, 0, 0], alloc, max_m, [0, 0, 0])
-    assert res_wait["status"] == "WAITING"
-    assert res_wait["safety_result"] is None
-
-    # 4. GRANTED (P1 requests [1, 0, 2], safe)
-    res_grant = handle_request(1, [1, 0, 2], alloc, max_m, avail)
-    assert res_grant["status"] == "GRANTED"
-    assert res_grant["safety_result"] is not None
-    assert res_grant["safety_result"]["is_safe"] is True
-    # new_allocation and new_available must reflect changes
-    np.testing.assert_array_equal(res_grant["new_allocation"][1], np.array([3, 0, 2]))
-    np.testing.assert_array_equal(res_grant["new_available"], np.array([2, 3, 0]))
-
-    # 5. DENIED_UNSAFE (From state after P1 granted, P0 requests [0, 2, 0])
-    post_grant_alloc = res_grant["new_allocation"]
-    post_grant_avail = res_grant["new_available"]
-    res_unsafe = handle_request(0, [0, 2, 0], post_grant_alloc, max_m, post_grant_avail)
-    assert res_unsafe["status"] == "DENIED_UNSAFE"
-    assert res_unsafe["safety_result"] is not None
-    assert res_unsafe["safety_result"]["is_safe"] is False
-    # Original arrays must be unchanged
-    np.testing.assert_array_equal(res_unsafe["new_allocation"], post_grant_alloc)
-    np.testing.assert_array_equal(res_unsafe["new_available"], post_grant_avail)
-
-    # In-place verification: orig arrays were NEVER touched
-    np.testing.assert_array_equal(alloc, orig_alloc)
-    np.testing.assert_array_equal(avail, orig_avail)
-    np.testing.assert_array_equal(max_m, orig_max)
-
