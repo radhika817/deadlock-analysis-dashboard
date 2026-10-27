@@ -1,46 +1,320 @@
 """
-banker.py - Banker's Algorithm for Deadlock Avoidance.
+banker.py - Dijkstra's Banker's Algorithm for Deadlock Avoidance.
 
-This module implements:
-1. Need matrix calculation: Need[i][j] = Maximum[i][j] - Allocation[i][j]
-2. Safety Algorithm:
-   - Evaluates whether the system is in a SAFE or UNSAFE state.
-   - Computes step-by-step Work updates and produces a complete safe sequence.
-3. Resource Request Handling:
-   Strict 6-step evaluation:
-     Step 1: Check for invalid inputs (bad process ID, negative values, wrong vector length).
-     Step 2: Check if Request > Need (Process exceeds its maximum claim).
-     Step 3: Check if Request > Available (Process must wait/defer; state unchanged).
-     Step 4: Temporarily simulate allocation on a copy of the state.
-     Step 5: Run safety algorithm on simulated state.
-     Step 6: If Safe -> Grant and commit state. If Unsafe -> Deny and restore state.
+This module provides pure Python / NumPy functions for:
+1. calculate_need(maximum, allocation)
+   Computes Need = Maximum - Allocation.
+2. safety_check(allocation, need, available)
+   Executes the safety algorithm to determine whether a safe execution
+   sequence exists, returning step-by-step Work updates.
+3. handle_request(process_id, request, allocation, maximum, available)
+   Evaluates a resource request against the strict 5-status protocol:
+   INVALID, EXCEEDS_NEED, WAITING, GRANTED, or DENIED_UNSAFE.
 
-All logic is independent of the UI and includes comprehensive docstrings for viva preparation.
+Never modifies input arrays in place.
 """
 
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Union
 import numpy as np
-import pandas as pd
-from validation import validate_request_input
 
 
-def calculate_need_matrix(maximum: np.ndarray, allocation: np.ndarray) -> np.ndarray:
+def calculate_need(maximum: np.ndarray, allocation: np.ndarray) -> np.ndarray:
     """
     Computes the Need matrix for all processes and resources.
-    
+
     Formula:
-        Need[i][j] = Maximum[i][j] - Allocation[i][j]
-        
+        Need = Maximum - Allocation
+
     Args:
-        maximum: 2D array representing the maximum resource demands.
-        allocation: 2D array representing currently allocated resources.
-        
+        maximum: 2D array-like of shape (n_processes, n_resources) with maximum demands.
+        allocation: 2D array-like of shape (n_processes, n_resources) with current allocations.
+
     Returns:
-        2D array of the same shape containing remaining resource needs.
+        np.ndarray: A new 2D integer array containing remaining resource needs.
     """
-    max_arr = np.array(maximum, dtype=int)
-    alloc_arr = np.array(allocation, dtype=int)
-    return max_arr - alloc_arr
+    # Create independent array copies to never modify inputs in place
+    max_arr = np.array(maximum, dtype=int).copy()
+    alloc_arr = np.array(allocation, dtype=int).copy()
+
+    # Need = Maximum - Allocation
+    need = max_arr - alloc_arr
+    return need
+
+
+def safety_check(
+    allocation: np.ndarray,
+    need: np.ndarray,
+    available: np.ndarray
+) -> Dict[str, Any]:
+    """
+    Runs Dijkstra's Banker's Safety Algorithm on the given system state.
+
+    Algorithm:
+    1. Work = Available (copy)
+       Finish = all False (length n_processes)
+    2. Repeatedly find an index i such that:
+         Finish[i] == False and Need[i] <= Work
+       If found:
+         Work = Work + Allocation[i]
+         Finish[i] = True
+         Record step details
+         Repeat step 2.
+    3. If all Finish[i] == True, system is SAFE; else UNSAFE.
+
+    Args:
+        allocation: 2D array-like of current allocations (n x m).
+        need: 2D array-like of remaining needs (n x m).
+        available: 1D array-like of currently available resources (m).
+
+    Returns:
+        dict with:
+        - 'is_safe' (bool): True if a safe sequence exists, False otherwise.
+        - 'safe_sequence' (list of int): List of process indices in safe order.
+        - 'steps' (list of dict): Step trace containing:
+             'step', 'process', 'need', 'work_before', 'allocation_released', 'work_after'
+        - 'unfinished' (list of int): List of process indices that could not finish.
+    """
+    # Ensure independent copies; never modify input arrays in place
+    alloc_arr = np.array(allocation, dtype=int).copy()
+    need_arr = np.array(need, dtype=int).copy()
+    work = np.array(available, dtype=int).flatten().copy()
+
+    n_proc, n_res = alloc_arr.shape
+
+    # Step 1: Initialize Finish flags and tracing structures
+    finish = [False] * n_proc
+    safe_sequence: List[int] = []
+    steps: List[Dict[str, Any]] = []
+
+    step_number = 1
+
+    # Step 2: Greedily find processes whose Need can be satisfied by current Work
+    while True:
+        found_process = False
+        for i in range(n_proc):
+            if not finish[i]:
+                # Check if Need[i] <= Work for all resource types
+                if np.all(need_arr[i] <= work):
+                    work_before = work.copy()
+                    released = alloc_arr[i].copy()
+
+                    # Process completes and releases its allocated resources
+                    work = work + released
+                    finish[i] = True
+                    safe_sequence.append(int(i))
+                    found_process = True
+
+                    steps.append({
+                        "step": step_number,
+                        "process": int(i),
+                        "need": need_arr[i].tolist(),
+                        "work_before": work_before.tolist(),
+                        "allocation_released": released.tolist(),
+                        "work_after": work.copy().tolist()
+                    })
+                    step_number += 1
+                    break  # Restart loop to prioritize from first eligible process
+
+        if not found_process:
+            break
+
+    # Step 3: Check whether all processes could finish
+    is_safe = all(finish)
+    unfinished = [int(i) for i in range(n_proc) if not finish[i]]
+
+    return {
+        "is_safe": is_safe,
+        "safe_sequence": safe_sequence,
+        "steps": steps,
+        "unfinished": unfinished
+    }
+
+
+def handle_request(
+    process_id: int,
+    request: Union[List[int], np.ndarray],
+    allocation: np.ndarray,
+    maximum: np.ndarray,
+    available: np.ndarray
+) -> Dict[str, Any]:
+    """
+    Handles a resource request from a process using the strict order of checks:
+
+    1. Invalid input check:
+       - Bad process_id (not integer or out of bounds)
+       - Negative values in request
+       - Wrong request vector length (does not match number of resource types)
+       -> Returns status "INVALID"
+    2. Over-claim check:
+       - request > Need for that process
+       -> Returns status "EXCEEDS_NEED"
+    3. Availability check:
+       - request > Available
+       -> Returns status "WAITING" (state unchanged, NOT invalid)
+    4. Simulation:
+       - Otherwise simulate on COPIES of the matrices and run safety_check
+    5. Evaluation:
+       - Safe -> Returns status "GRANTED" and commits new state
+       - Unsafe -> Returns status "DENIED_UNSAFE" and preserves original state
+
+    Never modifies input arrays in place.
+
+    Returns:
+        dict with:
+        - 'status': "INVALID", "EXCEEDS_NEED", "WAITING", "GRANTED", or "DENIED_UNSAFE"
+        - 'message': Detailed human-readable explanation
+        - 'new_allocation': Updated allocation if GRANTED, else copy of original
+        - 'new_available': Updated available if GRANTED, else copy of original
+        - 'safety_result': Dict returned by safety_check if simulation was run, else None
+    """
+    # Defensive copies of all inputs to guarantee no in-place modification
+    alloc_copy = np.array(allocation, dtype=int).copy()
+    max_copy = np.array(maximum, dtype=int).copy()
+    avail_copy = np.array(available, dtype=int).flatten().copy()
+
+    n_proc, n_res = alloc_copy.shape
+
+    # -------------------------------------------------------------
+    # Check 1: Input Validation
+    # -------------------------------------------------------------
+    # Validate process_id
+    if not isinstance(process_id, (int, np.integer)):
+        return {
+            "status": "INVALID",
+            "message": f"Process ID must be an integer, got {type(process_id).__name__}.",
+            "new_allocation": alloc_copy,
+            "new_available": avail_copy,
+            "safety_result": None
+        }
+
+    p_id = int(process_id)
+    if p_id < 0 or p_id >= n_proc:
+        return {
+            "status": "INVALID",
+            "message": f"Invalid process ID {p_id}. Must be between 0 and {n_proc - 1}.",
+            "new_allocation": alloc_copy,
+            "new_available": avail_copy,
+            "safety_result": None
+        }
+
+    # Validate request vector
+    try:
+        req_arr = np.array(request, dtype=int).flatten()
+    except Exception as e:
+        return {
+            "status": "INVALID",
+            "message": f"Request vector could not be converted to integer array: {e}",
+            "new_allocation": alloc_copy,
+            "new_available": avail_copy,
+            "safety_result": None
+        }
+
+    if len(req_arr) != n_res:
+        return {
+            "status": "INVALID",
+            "message": f"Request vector length mismatch: expected {n_res} resources, got {len(req_arr)}.",
+            "new_allocation": alloc_copy,
+            "new_available": avail_copy,
+            "safety_result": None
+        }
+
+    if (req_arr < 0).any():
+        neg_idx = int(np.where(req_arr < 0)[0][0])
+        return {
+            "status": "INVALID",
+            "message": f"Negative value {req_arr[neg_idx]} found in request at resource index {neg_idx}.",
+            "new_allocation": alloc_copy,
+            "new_available": avail_copy,
+            "safety_result": None
+        }
+
+    # Calculate Need on copies
+    need = calculate_need(max_copy, alloc_copy)
+
+    # -------------------------------------------------------------
+    # Check 2: Request > Need (Process exceeded maximum claim)
+    # -------------------------------------------------------------
+    if np.any(req_arr > need[p_id]):
+        violating = [j for j in range(n_res) if req_arr[j] > need[p_id, j]]
+        viol_str = ", ".join([f"Resource {j}: requested {req_arr[j]} > Need {need[p_id, j]}" for j in violating])
+        return {
+            "status": "EXCEEDS_NEED",
+            "message": f"Process P{p_id} exceeded its declared maximum claim (Need): {viol_str}.",
+            "new_allocation": alloc_copy,
+            "new_available": avail_copy,
+            "safety_result": None
+        }
+
+    # -------------------------------------------------------------
+    # Check 3: Request > Available (Process must wait, NOT invalid)
+    # -------------------------------------------------------------
+    if np.any(req_arr > avail_copy):
+        deficit = [j for j in range(n_res) if req_arr[j] > avail_copy[j]]
+        def_str = ", ".join([f"Resource {j}: requested {req_arr[j]} > Available {avail_copy[j]}" for j in deficit])
+        return {
+            "status": "WAITING",
+            "message": (
+                f"Process P{p_id} must wait: insufficient resources currently available ({def_str}). "
+                "System state remains unchanged."
+            ),
+            "new_allocation": alloc_copy,
+            "new_available": avail_copy,
+            "safety_result": None
+        }
+
+    # -------------------------------------------------------------
+    # Check 4: Simulate on COPIES
+    # -------------------------------------------------------------
+    sim_alloc = alloc_copy.copy()
+    sim_avail = avail_copy.copy()
+    sim_need = need.copy()
+
+    sim_avail -= req_arr
+    sim_alloc[p_id] += req_arr
+    sim_need[p_id] -= req_arr
+
+    # Run safety algorithm on the simulated state
+    safety_result = safety_check(sim_alloc, sim_need, sim_avail)
+
+    # -------------------------------------------------------------
+    # Check 5: Evaluate Safety Decision
+    # -------------------------------------------------------------
+    if safety_result["is_safe"]:
+        # Safe -> GRANTED and commit new state
+        seq_str = " -> ".join([f"P{idx}" for idx in safety_result["safe_sequence"]])
+        return {
+            "status": "GRANTED",
+            "message": (
+                f"Request of {req_arr.tolist()} by Process P{p_id} is GRANTED! "
+                f"Simulated state is SAFE with safe sequence: {seq_str}."
+            ),
+            "new_allocation": sim_alloc,
+            "new_available": sim_avail,
+            "safety_result": safety_result
+        }
+    else:
+        # Unsafe -> DENIED_UNSAFE and restore original state untouched
+        unfin_str = ", ".join([f"P{idx}" for idx in safety_result["unfinished"]])
+        return {
+            "status": "DENIED_UNSAFE",
+            "message": (
+                f"Request of {req_arr.tolist()} by Process P{p_id} is DENIED! "
+                f"Granting it leaves the system in an UNSAFE state (processes {unfin_str} cannot finish). "
+                "Original system state has been preserved untouched."
+            ),
+            "new_allocation": alloc_copy,
+            "new_available": avail_copy,
+            "safety_result": safety_result
+        }
+
+
+# ============================================================================
+# COMPATIBILITY WRAPPERS & HELPERS FOR UI AND ADVANCED REPORTING
+# ============================================================================
+
+def calculate_need_matrix(maximum: np.ndarray, allocation: np.ndarray) -> np.ndarray:
+    """Alias for calculate_need for backward compatibility."""
+    return calculate_need(maximum, allocation)
 
 
 def run_safety_algorithm(
@@ -51,111 +325,55 @@ def run_safety_algorithm(
     resource_labels: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
-    Runs Dijkstra's Banker's Safety Algorithm to find a safe execution sequence.
-
-    Algorithm steps:
-    1. Let Work = Available (copy of available vector).
-       Let Finish[i] = False for all processes i = 0, 1, ..., n-1.
-    2. Find an index i such that:
-         Finish[i] == False and Need[i] <= Work.
-       If no such i exists, go to step 4.
-    3. Work = Work + Allocation[i]
-       Finish[i] = True
-       Record step details.
-       Go to step 2.
-    4. If Finish[i] == True for all i, the system is in a SAFE state.
-       Otherwise, the system is in an UNSAFE state.
-
-    Args:
-        allocation: 2D array of current allocations (n x m).
-        need: 2D array of remaining needs (n x m).
-        available: 1D array of available resources (m).
-        process_labels: Optional labels for processes (e.g. ['P0', 'P1', ...]).
-        resource_labels: Optional labels for resources (e.g. ['A', 'B', 'C']).
-
-    Returns:
-        A dictionary containing:
-        - 'is_safe': bool
-        - 'status': 'SAFE' or 'UNSAFE'
-        - 'safe_sequence': list of process labels in safe order (empty if unsafe)
-        - 'steps': list of dicts recording each execution step
-        - 'unfinished_processes': list of process labels that could not finish
-        - 'explanation': clear explanation for viva presentation
+    Wrapper around safety_check providing labeled output and viva explanations for UI.
     """
-    alloc_arr = np.array(allocation, dtype=int)
-    need_arr = np.array(need, dtype=int)
-    work = np.array(available, dtype=int).copy()
-
-    n_proc, n_res = alloc_arr.shape
+    res = safety_check(allocation, need, available)
+    n_proc = len(allocation)
     p_labels = process_labels if process_labels and len(process_labels) == n_proc else [f"P{i}" for i in range(n_proc)]
-    r_labels = resource_labels if resource_labels and len(resource_labels) == n_res else [f"R{j}" for j in range(n_res)]
 
-    finish = [False] * n_proc
-    safe_seq: List[str] = []
-    steps_log: List[Dict[str, Any]] = []
+    labeled_sequence = [p_labels[i] for i in res["safe_sequence"]]
+    labeled_unfinished = [p_labels[i] for i in res["unfinished"]]
 
-    step_counter = 1
-    while True:
-        found_process = False
-        for i in range(n_proc):
-            if not finish[i]:
-                # Check if Need[i] <= Work for all resource types
-                if np.all(need_arr[i] <= work):
-                    work_before = work.copy()
-                    released = alloc_arr[i].copy()
-                    work = work + released
-                    finish[i] = True
-                    safe_seq.append(p_labels[i])
-                    found_process = True
+    # Enrich steps with process labels
+    labeled_steps = []
+    for s in res["steps"]:
+        p_name = p_labels[s["process"]]
+        labeled_steps.append({
+            **s,
+            "process": p_name,
+            "description": (
+                f"Step {s['step']}: Process {p_name} satisfies Need {s['need']} "
+                f"<= Work {s['work_before']}. Executes to completion and returns "
+                f"Allocation {s['allocation_released']}. Work becomes {s['work_after']}."
+            )
+        })
 
-                    steps_log.append({
-                        "step": step_counter,
-                        "process": p_labels[i],
-                        "need": need_arr[i].tolist(),
-                        "work_before": work_before.tolist(),
-                        "allocation_released": released.tolist(),
-                        "work_after": work.copy().tolist(),
-                        "description": (
-                            f"Step {step_counter}: Process {p_labels[i]} satisfies Need {need_arr[i].tolist()} "
-                            f"<= Work {work_before.tolist()}. Runs to completion and releases "
-                            f"Allocation {released.tolist()}. New Work = {work.tolist()}."
-                        )
-                    })
-                    step_counter += 1
-                    break  # Restart loop from first unfinished process
-        if not found_process:
-            break
-
-    is_safe = all(finish)
-    unfinished = [p_labels[i] for i in range(n_proc) if not finish[i]]
+    is_safe = res["is_safe"]
+    status_str = "SAFE" if is_safe else "UNSAFE"
+    seq_str = " -> ".join(labeled_sequence) if is_safe else "None"
 
     if is_safe:
-        status = "SAFE"
-        seq_str = " -> ".join(safe_seq)
         explanation = (
-            f"The system is in a SAFE state. A safe sequence exists: {seq_str}. "
+            f"The system is in a SAFE state. A complete safe sequence exists: {seq_str}. "
             f"All {n_proc} processes can obtain their declared maximum resources, "
             f"finish execution, and return their allocated resources without deadlocking."
         )
     else:
-        status = "UNSAFE"
         explanation = (
-            f"The system is in an UNSAFE state. No safe sequence could be found. "
-            f"Processes {', '.join(unfinished)} cannot satisfy their remaining Need "
-            f"with the available Work vector {work.tolist()}. "
-            f"IMPORTANT: An unsafe state does NOT mean a deadlock has already occurred; "
-            f"it means the system cannot guarantee that deadlock will be avoided if processes "
-            f"request their maximum resource claims."
+            f"The system is in an UNSAFE state. No safe sequence exists. "
+            f"Processes {', '.join(labeled_unfinished)} cannot satisfy their remaining Need. "
+            f"Note: An unsafe state does NOT mean a deadlock has occurred yet; "
+            f"it means the system cannot guarantee avoidance if processes claim their maximum demands."
         )
 
     return {
         "is_safe": is_safe,
-        "status": status,
-        "safe_sequence": safe_seq,
-        "safe_sequence_str": " -> ".join(safe_seq) if is_safe else "None",
-        "steps": steps_log,
-        "unfinished_processes": unfinished,
-        "final_work": work.tolist(),
+        "status": status_str,
+        "safe_sequence": labeled_sequence,
+        "safe_sequence_indices": res["safe_sequence"],
+        "safe_sequence_str": seq_str,
+        "steps": labeled_steps,
+        "unfinished_processes": labeled_unfinished,
         "explanation": explanation
     }
 
@@ -170,189 +388,81 @@ def handle_resource_request(
     resource_labels: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
-    Handles a resource request from a process following the strict 6-step protocol:
-
-    Step 1: Validate input formatting (process ID, dimensions, non-negative integers).
-    Step 2: Check if Request > Need (Process claims more than its declared maximum).
-    Step 3: Check if Request > Available (Resource not currently free; process must WAIT/DEFER).
-    Step 4: Temporarily allocate resources on a duplicate state copy:
-              Available' = Available - Request
-              Allocation'[i] = Allocation[i] + Request
-              Need'[i] = Need[i] - Request
-    Step 5: Run the safety algorithm on the simulated state.
-    Step 6: Decision:
-              - If SAFE: Grant request, permanently commit state changes.
-              - If UNSAFE: Deny request, discard simulation, restore original state.
-
-    Returns:
-        A comprehensive result dictionary detailing the status, decision,
-        before/after states, step log, and viva explanation.
+    Adapter bridging handle_request with UI data expectations.
     """
-    alloc_orig = np.array(allocation, dtype=int).copy()
-    max_orig = np.array(maximum, dtype=int).copy()
-    avail_orig = np.array(available, dtype=int).copy()
-    need_orig = calculate_need_matrix(max_orig, alloc_orig)
-
-    n_proc, n_res = alloc_orig.shape
+    n_proc, n_res = np.array(allocation).shape
     p_labels = process_labels if process_labels and len(process_labels) == n_proc else [f"P{i}" for i in range(n_proc)]
     r_labels = resource_labels if resource_labels and len(resource_labels) == n_res else [f"R{j}" for j in range(n_res)]
 
-    # --- STEP 1: Input Validation ---
-    is_valid_input, p_idx, req_arr, err_msg = validate_request_input(
-        process_idx, request_vector, n_proc, n_res, p_labels
-    )
-    if not is_valid_input:
-        return {
-            "status": "INVALID INPUT",
-            "granted": False,
-            "step_reached": 1,
-            "reason": f"Input validation failed: {err_msg}",
-            "process_label": str(process_idx),
-            "request_vector": str(request_vector),
-            "state_changed": False,
-            "allocation": alloc_orig,
-            "available": avail_orig,
-            "need": need_orig,
-            "before_state": {"allocation": alloc_orig, "available": avail_orig, "need": need_orig},
-            "after_state": {"allocation": alloc_orig, "available": avail_orig, "need": need_orig},
-            "safety_result": None,
-            "viva_explanation": "Invalid requests (negative numbers, out-of-range IDs, non-integers) are rejected before any OS state evaluation."
-        }
+    # Parse process label to integer index if needed
+    p_id = process_idx
+    if isinstance(process_idx, str):
+        cleaned = process_idx.strip().upper()
+        if cleaned.startswith("P") and cleaned[1:].isdigit():
+            p_id = int(cleaned[1:])
+        elif cleaned.isdigit():
+            p_id = int(cleaned)
+        elif cleaned in p_labels:
+            p_id = p_labels.index(cleaned)
 
-    proc_label = p_labels[p_idx]
-    req_list = req_arr.tolist()
+    # Call pure handle_request
+    core_res = handle_request(p_id, request_vector, allocation, maximum, available)
 
-    # --- STEP 2: Request <= Need Check ---
-    # Condition: If Request[i][j] > Need[i][j], error: process exceeded maximum claim.
-    if np.any(req_arr > need_orig[p_idx]):
-        violating_resources = [r_labels[j] for j in range(n_res) if req_arr[j] > need_orig[p_idx, j]]
-        viol_details = [
-            f"{r_labels[j]} (Requested: {req_arr[j]} > Remaining Need: {need_orig[p_idx, j]})"
-            for j in range(n_res) if req_arr[j] > need_orig[p_idx, j]
-        ]
-        return {
-            "status": "INVALID INPUT",
-            "granted": False,
-            "step_reached": 2,
-            "reason": (
-                f"Error: Process {proc_label} has exceeded its declared maximum claim! "
-                f"Violations on resource(s): {', '.join(viol_details)}."
-            ),
-            "process_label": proc_label,
-            "request_vector": req_list,
-            "state_changed": False,
-            "allocation": alloc_orig,
-            "available": avail_orig,
-            "need": need_orig,
-            "before_state": {"allocation": alloc_orig, "available": avail_orig, "need": need_orig},
-            "after_state": {"allocation": alloc_orig, "available": avail_orig, "need": need_orig},
-            "safety_result": None,
-            "viva_explanation": (
-                f"In Banker's Algorithm, a process can NEVER request more than its declared maximum demand. "
-                f"Since Request > Need for {proc_label}, this is treated as an illegal over-claim violation."
-            )
-        }
+    # Map core status to UI status banners
+    status_map = {
+        "INVALID": "INVALID INPUT",
+        "EXCEEDS_NEED": "INVALID INPUT",
+        "WAITING": "WAITING / DEFERRED",
+        "GRANTED": "SAFE",
+        "DENIED_UNSAFE": "UNSAFE"
+    }
 
-    # --- STEP 3: Request <= Available Check ---
-    # Condition: If Request[i][j] > Available[j], process must wait (WAITING / DEFERRED).
-    if np.any(req_arr > avail_orig):
-        deficit_resources = [
-            f"{r_labels[j]} (Requested: {req_arr[j]}, Available: {avail_orig[j]})"
-            for j in range(n_res) if req_arr[j] > avail_orig[j]
-        ]
-        return {
-            "status": "WAITING / DEFERRED",
-            "granted": False,
-            "step_reached": 3,
-            "reason": (
-                f"Process {proc_label} must wait because insufficient resources are currently available. "
-                f"Shortage on: {', '.join(deficit_resources)}. The system state remains UNCHANGED."
-            ),
-            "process_label": proc_label,
-            "request_vector": req_list,
-            "state_changed": False,
-            "allocation": alloc_orig,
-            "available": avail_orig,
-            "need": need_orig,
-            "before_state": {"allocation": alloc_orig, "available": avail_orig, "need": need_orig},
-            "after_state": {"allocation": alloc_orig, "available": avail_orig, "need": need_orig},
-            "safety_result": None,
-            "viva_explanation": (
-                f"The request is valid and within maximum claims (Request <= Need), but the OS does not currently have "
-                f"enough free instances. The process is placed in a waiting queue. The current allocation is preserved."
-            )
-        }
+    ui_status = status_map.get(core_res["status"], core_res["status"])
+    is_granted = (core_res["status"] == "GRANTED")
+    p_name = p_labels[p_id] if isinstance(p_id, int) and 0 <= p_id < n_proc else str(process_idx)
 
-    # --- STEP 4: Simulated Allocation on State Copy ---
-    sim_alloc = alloc_orig.copy()
-    sim_avail = avail_orig.copy()
-    sim_need = need_orig.copy()
+    alloc_orig = np.array(allocation, dtype=int).copy()
+    max_orig = np.array(maximum, dtype=int).copy()
+    avail_orig = np.array(available, dtype=int).copy()
+    need_orig = calculate_need(max_orig, alloc_orig)
 
-    sim_avail -= req_arr
-    sim_alloc[p_idx] += req_arr
-    sim_need[p_idx] -= req_arr
+    new_alloc = core_res["new_allocation"]
+    new_avail = core_res["new_available"]
+    new_need = calculate_need(max_orig, new_alloc)
 
-    # --- STEP 5: Run Safety Algorithm on Simulated State ---
-    safety_res = run_safety_algorithm(sim_alloc, sim_need, sim_avail, p_labels, r_labels)
-
-    # --- STEP 6: Decision (Grant or Deny & Restore) ---
-    if safety_res["is_safe"]:
-        # Safe -> Grant and commit state
-        return {
-            "status": "SAFE",
-            "granted": True,
-            "step_reached": 6,
-            "reason": (
-                f"Request of {req_list} by {proc_label} GRANTED! "
-                f"Simulated system state is SAFE with safe sequence: {safety_res['safe_sequence_str']}."
-            ),
-            "process_label": proc_label,
-            "request_vector": req_list,
-            "state_changed": True,
-            "allocation": sim_alloc,
-            "available": sim_avail,
-            "need": sim_need,
-            "before_state": {"allocation": alloc_orig, "available": avail_orig, "need": need_orig},
-            "after_state": {"allocation": sim_alloc, "available": sim_avail, "need": sim_need},
-            "safety_result": safety_res,
-            "viva_explanation": (
-                f"Granting {proc_label}'s request leaves the system in a verified safe state. "
-                f"There exists a sequence {safety_res['safe_sequence_str']} ensuring every process "
-                f"can eventually finish without entering a deadlock."
-            )
-        }
+    # Format explanation for viva
+    if core_res["status"] == "INVALID":
+        viva_exp = "Invalid requests (negative numbers, out-of-range IDs, non-integers) are rejected before any OS state evaluation."
+    elif core_res["status"] == "EXCEEDS_NEED":
+        viva_exp = f"Process {p_name} requested more than its declared maximum claim (Request > Need), violating Banker's invariants."
+    elif core_res["status"] == "WAITING":
+        viva_exp = f"Process {p_name}'s request is within Need, but exceeds currently Available resources. Placed in waiting queue; allocation unchanged."
+    elif core_res["status"] == "GRANTED":
+        viva_exp = f"Granting {p_name}'s request leaves the system in a verified safe state. System state committed."
     else:
-        # Unsafe -> Deny, reject changes, and restore state
-        return {
-            "status": "UNSAFE",
-            "granted": False,
-            "step_reached": 6,
-            "reason": (
-                f"Request of {req_list} by {proc_label} DENIED! "
-                f"Granting this request would leave the system in an UNSAFE state. "
-                f"The original allocation and available vectors have been RESTORED."
-            ),
-            "process_label": proc_label,
-            "request_vector": req_list,
-            "state_changed": False,
-            "allocation": alloc_orig,
-            "available": avail_orig,
-            "need": need_orig,
-            "before_state": {"allocation": alloc_orig, "available": avail_orig, "need": need_orig},
-            "after_state": {"allocation": alloc_orig, "available": avail_orig, "need": need_orig},
-            "safety_result": safety_res,
-            "viva_explanation": (
-                f"The request is within Need and within Available, but granting it would leave insufficient free resources "
-                f"for any remaining process to finish its maximum claim. To avoid potential deadlock, Banker's Algorithm "
-                f"denies the request and restores the previous safe state."
-            )
-        }
+        viva_exp = f"Granting {p_name}'s request would leave the system unsafe with no guaranteed completion sequence. Request denied and original state restored."
+
+    return {
+        "status": ui_status,
+        "core_status": core_res["status"],
+        "granted": is_granted,
+        "reason": core_res["message"],
+        "process_label": p_name,
+        "request_vector": list(request_vector) if hasattr(request_vector, '__iter__') else [request_vector],
+        "state_changed": is_granted,
+        "allocation": new_alloc,
+        "available": new_avail,
+        "need": new_need,
+        "before_state": {"allocation": alloc_orig, "available": avail_orig, "need": need_orig},
+        "after_state": {"allocation": new_alloc, "available": new_avail, "need": new_need},
+        "safety_result": core_res["safety_result"],
+        "viva_explanation": viva_exp
+    }
 
 
-def format_steps_as_dataframe(steps: List[Dict[str, Any]], resource_labels: Optional[List[str]] = None) -> pd.DataFrame:
-    """
-    Helper function to convert safety steps log into a clean pandas DataFrame for display.
-    """
+def format_steps_as_dataframe(steps: List[Dict[str, Any]], resource_labels: Optional[List[str]] = None) -> Any:
+    """Helper function to convert steps into a pandas DataFrame."""
+    import pandas as pd
     if not steps:
         return pd.DataFrame(columns=["Step", "Process Picked", "Need[i]", "Work Before", "Allocation Released", "Work After"])
 
@@ -360,7 +470,7 @@ def format_steps_as_dataframe(steps: List[Dict[str, Any]], resource_labels: Opti
     for s in steps:
         rows.append({
             "Step": s["step"],
-            "Process Picked": s["process"],
+            "Process Picked": str(s["process"]),
             "Need[i]": str(s["need"]),
             "Work Before": str(s["work_before"]),
             "Allocation Released": str(s["allocation_released"]),

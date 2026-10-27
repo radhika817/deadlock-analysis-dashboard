@@ -29,7 +29,14 @@ import pytest
 import numpy as np
 import networkx as nx
 
-from banker import calculate_need_matrix, run_safety_algorithm, handle_resource_request
+from banker import (
+    calculate_need,
+    safety_check,
+    handle_request,
+    calculate_need_matrix,
+    run_safety_algorithm,
+    handle_resource_request
+)
 from detection import (
     detect_single_instance_deadlock,
     detect_multi_instance_deadlock,
