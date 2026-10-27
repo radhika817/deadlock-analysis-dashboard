@@ -212,6 +212,11 @@ def render_status_banner(status_type: str, message: str, details: str = ""):
         icon = "🟢"
         title = "SAFE" if status_upper == "SAFE" else "SAFE (Request Granted)"
         title_color = "#34D399"
+    elif "PREVENT" in status_upper:
+        css_class = "status-safe"
+        icon = "🛡️"
+        title = "DEADLOCK PREVENTED"
+        title_color = "#34D399"
     elif status_upper in ["UNSAFE", "DENIED_UNSAFE"]:
         css_class = "status-unsafe"
         icon = "🟠"
@@ -227,6 +232,11 @@ def render_status_banner(status_type: str, message: str, details: str = ""):
         icon = "🔴"
         title = "DEADLOCK DETECTED"
         title_color = "#F87171"
+    elif "VALID" in status_upper or "BOUND" in status_upper:
+        css_class = "status-invalid"
+        icon = "📋"
+        title = "BOUNDARY / VALIDATION TEST"
+        title_color = "#C084FC"
     else:  # INVALID, INVALID INPUT, EXCEEDS_NEED
         css_class = "status-invalid"
         icon = "🟣"
@@ -294,6 +304,192 @@ def make_figure_dark_friendly(fig: plt.Figure, is_dark: bool = True) -> plt.Figu
 # SESSION STATE INITIALIZATION
 # ============================================================================
 
+TAB_TITLES = [
+    "🛡️ Deadlock Avoidance (Banker's)",
+    "🔍 Deadlock Detection",
+    "⚙️ Prevention & Recovery",
+    "📊 Test Scenarios & Results Table"
+]
+
+
+def apply_preset(preset_id: str, keep_tab: bool = False):
+    """
+    Loads and executes a preset scenario (A through F).
+    Guarantees:
+    - Scenario A: Loads classic safe state, runs safety check -> valid safe sequence.
+    - Scenario B: Loads state, submits P4 request [3, 3, 0] -> WAITING / DEFERRED (state unchanged).
+    - Scenario C: Loads state, submits P0 request [0, 2, 0] -> DENIED / UNSAFE (state restored).
+    - Scenario D: Loads separate deadlocked scenario, runs detection algorithms -> DEADLOCK DETECTED.
+    - Scenario E: Loads prevention demonstration (Resource Ordering) -> DEADLOCK PREVENTED (Circular Wait eliminated).
+    - Scenario F: Executes boundary and invalid input validation suite -> VALIDATION SUITE.
+    """
+    preset_id = preset_id.upper().strip()
+    st.session_state.active_preset = preset_id
+
+    if preset_id == "A":
+        data = scenarios.get_scenario_a()
+        st.session_state.num_processes = data["num_processes"]
+        st.session_state.num_resources = data["num_resources"]
+        st.session_state.process_labels = data["process_labels"].copy()
+        st.session_state.resource_labels = data["resource_labels"].copy()
+        st.session_state.allocation = data["allocation"].copy()
+        st.session_state.maximum = data["maximum"].copy()
+        st.session_state.available = data["available"].copy()
+        st.session_state.total = data["total"].copy()
+
+        need = calculate_need(st.session_state.maximum, st.session_state.allocation)
+        res_safety = safety_check(st.session_state.allocation, need, st.session_state.available)
+        res_safety["validation_error"] = None
+        st.session_state.last_safety_check = res_safety
+        st.session_state.last_request_outcome = None
+
+        st.session_state.req_proc_idx = 1
+        st.session_state.req_defaults = [0] * data["num_resources"]
+        st.session_state.req_form_version = st.session_state.get("req_form_version", 0) + 1
+        st.session_state.active_preset_run = ("A", run_scenario_a())
+        st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
+        if not keep_tab:
+            st.session_state.main_tab = TAB_TITLES[0]
+
+    elif preset_id == "B":
+        data = scenarios.get_scenario_b()
+        st.session_state.num_processes = data["num_processes"]
+        st.session_state.num_resources = data["num_resources"]
+        st.session_state.process_labels = data["process_labels"].copy()
+        st.session_state.resource_labels = data["resource_labels"].copy()
+        st.session_state.allocation = data["allocation"].copy()
+        st.session_state.maximum = data["maximum"].copy()
+        st.session_state.available = data["available"].copy()
+        st.session_state.total = data["total"].copy()
+
+        st.session_state.last_safety_check = None
+
+        before_alloc = data["allocation"].copy()
+        before_avail = data["available"].copy()
+        req_outcome = handle_request(
+            data["request_process"],
+            data["request_vector"],
+            before_alloc,
+            data["maximum"],
+            before_avail
+        )
+        st.session_state.last_request_outcome = {
+            "process": data["request_process_label"],
+            "request": data["request_vector"].tolist(),
+            "outcome": req_outcome,
+            "before_allocation": before_alloc,
+            "before_available": before_avail
+        }
+        st.session_state.request_history.append({
+            "Request": f"{data['request_process_label']} requests {data['request_vector'].tolist()}",
+            "Result": req_outcome["status"],
+            "Reason": req_outcome["message"]
+        })
+
+        st.session_state.req_proc_idx = data["request_process"]
+        st.session_state.req_defaults = data["request_vector"].tolist()
+        st.session_state.req_form_version = st.session_state.get("req_form_version", 0) + 1
+        st.session_state.active_preset_run = ("B", run_scenario_b())
+        st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
+        if not keep_tab:
+            st.session_state.main_tab = TAB_TITLES[0]
+
+    elif preset_id == "C":
+        data = scenarios.get_scenario_c()
+        st.session_state.num_processes = data["num_processes"]
+        st.session_state.num_resources = data["num_resources"]
+        st.session_state.process_labels = data["process_labels"].copy()
+        st.session_state.resource_labels = data["resource_labels"].copy()
+        st.session_state.allocation = data["allocation"].copy()
+        st.session_state.maximum = data["maximum"].copy()
+        st.session_state.available = data["available"].copy()
+        st.session_state.total = data["total"].copy()
+
+        st.session_state.last_safety_check = None
+
+        before_alloc = data["allocation"].copy()
+        before_avail = data["available"].copy()
+        req_outcome = handle_request(
+            data["request_process"],
+            data["request_vector"],
+            before_alloc,
+            data["maximum"],
+            before_avail
+        )
+        st.session_state.last_request_outcome = {
+            "process": data["request_process_label"],
+            "request": data["request_vector"].tolist(),
+            "outcome": req_outcome,
+            "before_allocation": before_alloc,
+            "before_available": before_avail
+        }
+        st.session_state.request_history.append({
+            "Request": f"{data['request_process_label']} requests {data['request_vector'].tolist()}",
+            "Result": req_outcome["status"],
+            "Reason": req_outcome["message"]
+        })
+
+        st.session_state.req_proc_idx = data["request_process"]
+        st.session_state.req_defaults = data["request_vector"].tolist()
+        st.session_state.req_form_version = st.session_state.get("req_form_version", 0) + 1
+        st.session_state.active_preset_run = ("C", run_scenario_c())
+        st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
+        if not keep_tab:
+            st.session_state.main_tab = TAB_TITLES[0]
+
+    elif preset_id == "D":
+        preset_s = scenarios.get_scenario_d_single()
+        p_list = preset_s["processes"]
+        r_list = preset_s["resources"]
+        alloc_edges = preset_s["allocation_edges"]
+        req_edges = preset_s["request_edges"]
+        st.session_state.det_single_proc_str = ", ".join(p_list)
+        st.session_state.det_single_res_str = ", ".join(r_list)
+        st.session_state.det_single_edges_alloc = "\n".join([f"{r}, {p}" for r, p in alloc_edges])
+        st.session_state.det_single_edges_req = "\n".join([f"{p}, {r}" for p, r in req_edges])
+        st.session_state.det_single_last_result = detect_single_instance_deadlock(p_list, r_list, alloc_edges, req_edges)
+        st.session_state.det_single_recovery_result = None
+
+        preset_m = scenarios.get_scenario_d_multi()
+        st.session_state.det_multi_processes = preset_m["processes"].copy()
+        st.session_state.det_multi_resources = preset_m["resources"].copy()
+        st.session_state.det_multi_alloc = preset_m["allocation"].copy()
+        st.session_state.det_multi_req = preset_m["request"].copy()
+        st.session_state.det_multi_avail = preset_m["available"].copy()
+        st.session_state.det_multi_last_result = detect_multi_instance(preset_m["allocation"], preset_m["request"], preset_m["available"])
+        st.session_state.det_multi_recovery_result = None
+        st.session_state.det_multi_version = st.session_state.get("det_multi_version", 0) + 1
+
+        st.session_state.last_safety_check = None
+        st.session_state.last_request_outcome = None
+        st.session_state.active_preset_run = ("D", run_scenario_d())
+        if not keep_tab:
+            st.session_state.main_tab = TAB_TITLES[1]
+
+    elif preset_id == "E":
+        preset_s = scenarios.get_scenario_d_single()
+        st.session_state.det_single_proc_str = ", ".join(preset_s["processes"])
+        st.session_state.det_single_res_str = ", ".join(preset_s["resources"])
+        st.session_state.det_single_edges_alloc = "\n".join([f"{r}, {p}" for r, p in preset_s["allocation_edges"]])
+        st.session_state.det_single_edges_req = "\n".join([f"{p}, {r}" for p, r in preset_s["request_edges"]])
+
+        st.session_state.radio_prevention_policy = "Policy (a): Resource Ordering (Fixed total order: a process may only request in strictly increasing order) — Eliminates CIRCULAR WAIT"
+        st.session_state.radio_prevention_scenario = "Single-Instance Deadlocked Scenario (RAG / Wait-For Graph: Circular Wait on R1, R2)"
+
+        st.session_state.last_safety_check = None
+        st.session_state.last_request_outcome = None
+        st.session_state.active_preset_run = ("E", run_scenario_e())
+        if not keep_tab:
+            st.session_state.main_tab = TAB_TITLES[2]
+
+    elif preset_id == "F":
+        st.session_state.last_safety_check = None
+        st.session_state.last_request_outcome = None
+        st.session_state.active_preset_run = ("F", run_scenario_f())
+        if not keep_tab:
+            st.session_state.main_tab = TAB_TITLES[3]
+
+
 def initialize_session_state():
     """Initializes default state from Classic Example (Scenario A)."""
     if "initialized" not in st.session_state:
@@ -308,9 +504,19 @@ def initialize_session_state():
         st.session_state.total = default_data["total"].copy()
         st.session_state.request_history = []
         st.session_state.last_request_outcome = None
-        st.session_state.last_safety_check = None
         st.session_state.active_preset = "A"
         st.session_state.editor_version = 0
+
+        # Compute initial safety check for Scenario A
+        need = calculate_need(default_data["maximum"], default_data["allocation"])
+        res_safety = safety_check(default_data["allocation"], need, default_data["available"])
+        res_safety["validation_error"] = None
+        st.session_state.last_safety_check = res_safety
+        st.session_state.active_preset_run = ("A", run_scenario_a())
+        st.session_state.req_proc_idx = 1
+        st.session_state.req_defaults = [0] * default_data["num_resources"]
+        st.session_state.req_form_version = 0
+        st.session_state.main_tab = TAB_TITLES[0]
 
         # Isolated Detection Tab State (separate from Banker's matrices)
         preset_s = scenarios.get_scenario_d_single()
@@ -437,20 +643,7 @@ if not is_dark:
 
 # Reset Button
 if st.sidebar.button("🔄 Reset to Classic Example", type="secondary", use_container_width=True):
-    default_data = scenarios.get_default_state()
-    st.session_state.num_processes = default_data["num_processes"]
-    st.session_state.num_resources = default_data["num_resources"]
-    st.session_state.process_labels = default_data["process_labels"].copy()
-    st.session_state.resource_labels = default_data["resource_labels"].copy()
-    st.session_state.allocation = default_data["allocation"].copy()
-    st.session_state.maximum = default_data["maximum"].copy()
-    st.session_state.available = default_data["available"].copy()
-    st.session_state.total = default_data["total"].copy()
-    st.session_state.request_history = []
-    st.session_state.last_request_outcome = None
-    st.session_state.last_safety_check = None
-    st.session_state.active_preset = "A"
-    st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
+    apply_preset("A")
     st.rerun()
 
 # Sliders: Number of processes (1-10) and resource types (1-6)
@@ -542,57 +735,27 @@ col_p1, col_p2, col_p3 = st.sidebar.columns(3)
 col_p4, col_p5, col_p6 = st.sidebar.columns(3)
 
 if col_p1.button("A: Safe", help="Classic Safe State (5 processes, 3 resources)"):
-    data = scenarios.get_scenario_a()
-    st.session_state.num_processes = data["num_processes"]
-    st.session_state.num_resources = data["num_resources"]
-    st.session_state.process_labels = data["process_labels"].copy()
-    st.session_state.resource_labels = data["resource_labels"].copy()
-    st.session_state.allocation = data["allocation"].copy()
-    st.session_state.maximum = data["maximum"].copy()
-    st.session_state.available = data["available"].copy()
-    st.session_state.total = data["total"].copy()
-    st.session_state.active_preset = "A"
-    st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
+    apply_preset("A")
     st.rerun()
 
 if col_p2.button("B: Wait", help="Request > Available -> WAITING / DEFERRED"):
-    data = scenarios.get_scenario_b()
-    st.session_state.num_processes = data["num_processes"]
-    st.session_state.num_resources = data["num_resources"]
-    st.session_state.process_labels = data["process_labels"].copy()
-    st.session_state.resource_labels = data["resource_labels"].copy()
-    st.session_state.allocation = data["allocation"].copy()
-    st.session_state.maximum = data["maximum"].copy()
-    st.session_state.available = data["available"].copy()
-    st.session_state.total = data["total"].copy()
-    st.session_state.active_preset = "B"
-    st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
+    apply_preset("B")
     st.rerun()
 
 if col_p3.button("C: Unsafe", help="Unsafe Request -> Denied & Restored"):
-    data = scenarios.get_scenario_c()
-    st.session_state.num_processes = data["num_processes"]
-    st.session_state.num_resources = data["num_resources"]
-    st.session_state.process_labels = data["process_labels"].copy()
-    st.session_state.resource_labels = data["resource_labels"].copy()
-    st.session_state.allocation = data["allocation"].copy()
-    st.session_state.maximum = data["maximum"].copy()
-    st.session_state.available = data["available"].copy()
-    st.session_state.total = data["total"].copy()
-    st.session_state.active_preset = "C"
-    st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
+    apply_preset("C")
     st.rerun()
 
 if col_p4.button("D: Detect", help="Deadlock Detection (Single & Multi-Instance)"):
-    st.session_state.active_preset = "D"
+    apply_preset("D")
     st.rerun()
 
 if col_p5.button("E: Prevent", help="Prevention Policies (Ordering & Upfront)"):
-    st.session_state.active_preset = "E"
+    apply_preset("E")
     st.rerun()
 
 if col_p6.button("F: Bound", help="Boundary & Invalid Inputs"):
-    st.session_state.active_preset = "F"
+    apply_preset("F")
     st.rerun()
 
 
@@ -609,15 +772,25 @@ st.markdown(
 
 # Active Preset Banner
 if st.session_state.active_preset:
-    st.info(f"📍 **Active Preset Loaded:** Scenario {st.session_state.active_preset}. Edit values in the sidebar or switch presets anytime.")
+    preset_descriptions = {
+        "A": "Scenario A (Safe State): Classic textbook 5-process, 3-resource system in a proven safe state with a valid execution sequence.",
+        "B": "Scenario B (Request Exceeds Available): Process P4 requests [3, 3, 0]. Within Need [4, 3, 1] but exceeds Available [2, 3, 0] -> WAITING / DEFERRED (state strictly unchanged).",
+        "C": "Scenario C (Unsafe Request): Process P0 requests [0, 2, 0]. Within Need and Available, but simulated state is unsafe -> DENIED / UNSAFE (state restored).",
+        "D": "Scenario D (Deadlock Detection): Separate deadlocked scenario evaluated using Wait-For Graph cycle detection (Single-Instance) and Matrix Detection Algorithm (Multiple-Instance).",
+        "E": "Scenario E (Deadlock Prevention): Fixed Resource Ordering applied to Scenario D breaks circular wait and eliminates deadlock.",
+        "F": "Scenario F (Boundary Cases & Validation): Evaluates valid boundary conditions (Zero Available, Zero Need) and safely blocks invalid inputs."
+    }
+    desc = preset_descriptions.get(st.session_state.active_preset, f"Scenario {st.session_state.active_preset}")
+    st.info(f"📍 **Active Preset Loaded:** {desc} Edit values in the sidebar or switch presets anytime.")
+
+if "main_tab" not in st.session_state or st.session_state.main_tab not in TAB_TITLES:
+    st.session_state.main_tab = TAB_TITLES[0]
 
 # 4 Main Tabs
-tab_avoidance, tab_detection, tab_prevention, tab_scenarios = st.tabs([
-    "🛡️ Deadlock Avoidance (Banker's)",
-    "🔍 Deadlock Detection",
-    "⚙️ Prevention & Recovery",
-    "📊 Test Scenarios & Results Table"
-])
+tab_avoidance, tab_detection, tab_prevention, tab_scenarios = st.tabs(
+    TAB_TITLES,
+    key="main_tab"
+)
 
 
 # ============================================================================
@@ -627,6 +800,26 @@ tab_avoidance, tab_detection, tab_prevention, tab_scenarios = st.tabs([
 with tab_avoidance:
     st.header("Deadlock Avoidance: Dijkstra's Banker's Algorithm")
     st.caption("Validates whether granting a resource request preserves a state from which all processes can safely finish.")
+
+    if st.session_state.get("active_preset") == "D":
+        st.warning(
+            "📍 **Scenario D Active (Deadlock Detection):** Scenario D runs analytical deadlock detection algorithms "
+            "(Wait-For Graph cycle detection for Single-Instance, Matrix Detection Algorithm for Multiple-Instance) "
+            "on existing allocations and requests. Dijkstra's Banker's Algorithm shown in this tab is an Avoidance mechanism "
+            "evaluating potential future maximum claims and does NOT detect existing deadlocks. "
+            "Please switch to the **🔍 Deadlock Detection** tab to view detection results."
+        )
+    elif st.session_state.get("active_preset") == "E":
+        st.info(
+            "📍 **Scenario E Active (Deadlock Prevention):** Demonstrates how design-time prevention policies "
+            "(such as Fixed Resource Ordering) break Circular Wait. "
+            "Please switch to the **⚙️ Prevention & Recovery** tab to view prevention simulations."
+        )
+    elif st.session_state.get("active_preset") == "F":
+        st.info(
+            "📍 **Scenario F Active (Boundary Cases & Validation):** Demonstrates validation of boundary cases "
+            "and detection of invalid inputs. Please switch to the **📊 Test Scenarios & Results Table** tab."
+        )
 
     p_labels = st.session_state.process_labels
     r_labels = st.session_state.resource_labels
@@ -723,11 +916,24 @@ with tab_avoidance:
         elif res_safety["is_safe"]:
             seq_labels = [p_labels[i] for i in res_safety["safe_sequence"]]
             seq_str = " ➔ ".join(seq_labels)
-            render_status_banner(
-                "SAFE",
-                f"Safe Sequence Found: {seq_str}",
-                "Every process can obtain its maximum needed resources, finish, and release its allocation."
-            )
+            if st.session_state.get("active_preset") == "B":
+                render_status_banner(
+                    "SAFE",
+                    f"Base State Safe Sequence: {seq_str}",
+                    "The system base state prior to P4's request is safe. However, P4's pending request for [3, 3, 0] exceeds Available [2, 3, 0], placing P4 in WAITING/DEFERRED state below."
+                )
+            elif st.session_state.get("active_preset") == "C":
+                render_status_banner(
+                    "SAFE",
+                    f"Base State Safe Sequence: {seq_str}",
+                    "The system base state prior to P0's request is safe. However, granting P0's request for [0, 2, 0] would leave the system UNSAFE, so it is DENIED below."
+                )
+            else:
+                render_status_banner(
+                    "SAFE",
+                    f"Safe Sequence Found: {seq_str}",
+                    "Every process can obtain its maximum needed resources, finish, and release its allocation."
+                )
         else:
             unfin_labels = [p_labels[i] for i in res_safety["unfinished"]]
             render_status_banner(
@@ -764,14 +970,30 @@ with tab_avoidance:
 
     col_rf1, col_rf2 = st.columns([1, 2])
     with col_rf1:
-        req_proc_label = st.selectbox("Select Process:", options=p_labels, index=1 if len(p_labels) > 1 else 0)
+        default_p_idx = st.session_state.get("req_proc_idx", 1 if len(p_labels) > 1 else 0)
+        if default_p_idx >= len(p_labels) or default_p_idx < 0:
+            default_p_idx = 0
+        req_proc_label = st.selectbox(
+            "Select Process:",
+            options=p_labels,
+            index=default_p_idx,
+            key=f"req_proc_select_{st.session_state.get('req_form_version', 0)}"
+        )
         req_p_id = p_labels.index(req_proc_label)
 
     with col_rf2:
         req_vector_inputs = []
         sub_cols = st.columns(len(r_labels))
+        req_defs = st.session_state.get("req_defaults", [0] * len(r_labels))
         for r_i, c in enumerate(sub_cols):
-            val = c.number_input(f"Req {r_labels[r_i]}", min_value=-50, max_value=100, value=0, key=f"req_field_{r_i}")
+            init_val = req_defs[r_i] if r_i < len(req_defs) else 0
+            val = c.number_input(
+                f"Req {r_labels[r_i]}",
+                min_value=-50,
+                max_value=100,
+                value=int(init_val),
+                key=f"req_field_{r_i}_{st.session_state.get('req_form_version', 0)}"
+            )
             req_vector_inputs.append(int(val))
 
     if st.button(f"📥 Submit Request for {req_proc_label}", type="primary", use_container_width=True):
@@ -1663,27 +1885,27 @@ with tab_prevention:
         st.session_state.active_preset_run = None
 
     if col_btn1.button("🅰️ Preset A: Safe State", use_container_width=True, help="Classic 5-process, 3-resource Banker's safe state"):
-        st.session_state.active_preset_run = ("A", run_scenario_a())
+        apply_preset("A", keep_tab=True)
         st.rerun()
 
     if col_btn2.button("🅱️ Preset B: Request Exceeds Available", use_container_width=True, help="Grant P1 (1,0,2), then P4 requests (3,3,0)"):
-        st.session_state.active_preset_run = ("B", run_scenario_b())
+        apply_preset("B", keep_tab=True)
         st.rerun()
 
     if col_btn3.button("🅲 Preset C: Unsafe Request", use_container_width=True, help="Grant P1 (1,0,2), then P0 requests (0,2,0)"):
-        st.session_state.active_preset_run = ("C", run_scenario_c())
+        apply_preset("C", keep_tab=True)
         st.rerun()
 
     if col_btn4.button("🅳 Preset D: Deadlock Detection", use_container_width=True, help="Single-instance circular wait + Multi-instance example"):
-        st.session_state.active_preset_run = ("D", run_scenario_d())
+        apply_preset("D", keep_tab=True)
         st.rerun()
 
     if col_btn5.button("🅴 Preset E: Prevention on Scenario D", use_container_width=True, help="Resource Ordering and Request-All-Upfront applied to D"):
-        st.session_state.active_preset_run = ("E", run_scenario_e())
+        apply_preset("E", keep_tab=True)
         st.rerun()
 
     if col_btn6.button("🅵 Preset F: Boundary & Invalid Inputs", use_container_width=True, help="Zero Avail, Zero Need, P99, negative, Alloc>Max, len 2"):
-        st.session_state.active_preset_run = ("F", run_scenario_f())
+        apply_preset("F", keep_tab=True)
         st.rerun()
 
     # Detailed Scenario Live Inspection Panel
@@ -1783,7 +2005,7 @@ with tab_prevention:
 
         elif tag == "E":
             render_status_banner(
-                "SAFE",
+                "PREVENTED",
                 "Deadlock Successfully Prevented Under Both Policies!",
                 data["actual_result"]
             )
@@ -1805,9 +2027,9 @@ with tab_prevention:
 
         elif tag == "F":
             render_status_banner(
-                "SAFE",
+                "VALIDATION",
                 "All 6 Boundary and Invalid Inputs Evaluated Correctly!",
-                "Validation suite passed without throwing any uncaught exceptions."
+                "Validation suite passed: 2 valid boundary cases accepted, 4 invalid inputs safely blocked."
             )
             df_cases = pd.DataFrame(data["cases"])
             st.dataframe(df_cases[["id", "name", "status", "msg", "passed"]], use_container_width=True)

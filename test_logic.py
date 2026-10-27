@@ -824,5 +824,280 @@ def test_all_scenarios_runners_and_results_table():
         assert row["Match (PASS/FAIL)"] == "PASS"
 
 
+# ============================================================================
+# 6. SCENARIO A-F AUTOMATED VERIFICATION & STATE INTEGRITY TESTS
+# ============================================================================
+
+def test_scenario_a_produces_valid_safe_sequence():
+    """
+    Requirement 1: Scenario A must load a configuration that produces a valid safe sequence.
+    5 processes, 3 resources, Available=[3, 3, 2].
+    Need matrix is correctly computed and safety algorithm finds a valid safe sequence.
+    """
+    sc_a = get_scenario_a()
+    assert sc_a["num_processes"] == 5
+    assert sc_a["num_resources"] == 3
+    assert np.array_equal(sc_a["available"], [3, 3, 2])
+
+    need = calculate_need(sc_a["maximum"], sc_a["allocation"])
+    res = safety_check(sc_a["allocation"], need, sc_a["available"])
+
+    assert res["is_safe"] is True
+    assert len(res["safe_sequence"]) == 5
+    assert set(res["safe_sequence"]) == {0, 1, 2, 3, 4}
+    assert res["unfinished"] == []
+    # Verify Work increases monotonically as processes release allocations
+    for s in res["steps"]:
+        assert all(after >= before for before, after in zip(s["work_before"], s["work_after"]))
+
+
+def test_scenario_b_request_within_need_exceeds_available_waiting_state_unchanged():
+    """
+    Requirement 2: Scenario B must submit a request within the process's Need but exceeding Available.
+    It must show WAITING/DEFERRED and leave the allocation unchanged.
+    """
+    sc_b = get_scenario_b()
+    p_id = sc_b["request_process"]
+    req = sc_b["request_vector"]
+    alloc_orig = sc_b["allocation"].copy()
+    avail_orig = sc_b["available"].copy()
+    max_orig = sc_b["maximum"].copy()
+
+    need = calculate_need(max_orig, alloc_orig)
+
+    # 1. Verify Request <= Need holds
+    assert np.all(req <= need[p_id]), f"Request {req} must be <= Need {need[p_id]}"
+
+    # 2. Verify Request <= Available fails (resource A deficit: 3 > 2)
+    assert not np.all(req <= avail_orig), f"Request {req} must exceed Available {avail_orig}"
+    assert req[0] > avail_orig[0]
+
+    # 3. Execute handle_request and verify status is WAITING
+    outcome = handle_request(p_id, req, alloc_orig, max_orig, avail_orig)
+    assert outcome["status"] == "WAITING"
+    assert "must wait" in outcome["message"]
+
+    # 4. CRITICAL: Allocation and Available must remain completely unchanged
+    assert np.array_equal(outcome["new_allocation"], alloc_orig)
+    assert np.array_equal(outcome["new_available"], avail_orig)
+    assert outcome["safety_result"] is None
+
+
+def test_scenario_c_unsafe_request_denied_and_state_restored():
+    """
+    Requirement 3: Scenario C must submit a request within both Need and Available that would make the state unsafe.
+    It must show DENIED/UNSAFE and restore the original state.
+    """
+    sc_c = get_scenario_c()
+    p_id = sc_c["request_process"]
+    req = sc_c["request_vector"]
+    alloc_orig = sc_c["allocation"].copy()
+    avail_orig = sc_c["available"].copy()
+    max_orig = sc_c["maximum"].copy()
+
+    need = calculate_need(max_orig, alloc_orig)
+
+    # 1. Verify Request <= Need holds
+    assert np.all(req <= need[p_id]), f"Request {req} must be <= Need {need[p_id]}"
+
+    # 2. Verify Request <= Available holds
+    assert np.all(req <= avail_orig), f"Request {req} must be <= Available {avail_orig}"
+
+    # 3. Execute handle_request and verify status is DENIED_UNSAFE
+    outcome = handle_request(p_id, req, alloc_orig, max_orig, avail_orig)
+    assert outcome["status"] == "DENIED_UNSAFE"
+    assert "DENIED" in outcome["message"]
+    assert "UNSAFE" in outcome["message"]
+    assert outcome["safety_result"]["is_safe"] is False
+
+    # 4. CRITICAL: Original state must be restored untouched
+    assert np.array_equal(outcome["new_allocation"], alloc_orig)
+    assert np.array_equal(outcome["new_available"], avail_orig)
+
+
+def test_scenario_d_separate_deadlocked_scenario_detection_not_banker():
+    """
+    Requirement 4: Scenario D must load a separate deadlocked scenario and run the appropriate deadlock detection algorithm.
+    Clearly state whether resources have single or multiple instances.
+    Verify detection does not merely display the Banker's Algorithm result.
+    """
+    # 1. Single-Instance Model: Cycle in WFG is necessary and sufficient
+    sc_s = get_scenario_d_single()
+    assert sc_s["model"] == "single-instance"
+    res_s = detect_single_instance(sc_s["allocation_edges"], sc_s["request_edges"])
+    assert res_s["deadlock"] is True
+    assert len(res_s["cycle"]) > 0
+    # In single-instance resources, each resource has exactly 1 unit; cycle <=> deadlock
+    assert set(res_s["cycle"]).issubset(set(sc_s["processes"]))
+
+    # 2. Multiple-Instance Model: Cycle alone is not conclusive; matrix detection algorithm required
+    sc_m = get_scenario_d_multi()
+    assert sc_m["model"] == "multiple-instance"
+    res_m = detect_multi_instance(sc_m["allocation"], sc_m["request"], sc_m["available"])
+    assert res_m["deadlock"] is True
+    assert len(res_m["deadlocked_processes"]) > 0
+    # Process 0 finishes and releases, but processes 1-4 remain deadlocked
+    assert 0 not in res_m["deadlocked_processes"]
+    assert {1, 2, 3, 4}.issubset(set(res_m["deadlocked_processes"]))
+
+    # 3. Separation check: Banker's algorithm is avoidance (evaluates max claim transitions),
+    # whereas detection inspects existing actual requests without requiring Max claims
+    assert "request" in sc_m
+    assert "maximum" not in sc_m
+
+
+def test_scenario_e_prevention_resource_ordering_prevents_circular_wait():
+    """
+    Requirement 5: Scenario E must demonstrate a prevention policy, such as fixed resource ordering,
+    and show how it prevents circular wait.
+    """
+    sc_d = get_scenario_d_single()
+    order = {"R1": 1, "R2": 2, "R3": 3, "R4": 4}
+
+    res_ro = simulate_prevention_single_instance(
+        sc_d["processes"],
+        sc_d["resources"],
+        sc_d["allocation_edges"],
+        sc_d["request_edges"],
+        policy="resource_ordering",
+        resource_order=order
+    )
+
+    # 1. Verify Circular Wait Coffman condition is eliminated
+    assert res_ro["condition_eliminated"] == "Circular Wait"
+    assert res_ro["deadlock_prevented"] is True
+    assert len(res_ro["modified_deadlocked"]) == 0
+
+    # 2. Verify backward request violating hierarchy was rejected
+    assert len(res_ro["rejected_edges"]) > 0
+    # P2 holding R2 (rank 2) requesting R1 (rank 1) violates 1 > 2
+    assert ("P2", "R1") in res_ro["rejected_edges"]
+
+
+def test_scenario_f_boundary_cases_and_invalid_inputs_validation():
+    """
+    Requirement 6: Scenario F must test valid boundary cases and invalid inputs,
+    displaying the correct results or validation messages.
+    """
+    sc_f = get_scenario_f()
+    cases = sc_f["cases"]
+    assert len(cases) == 6
+
+    # F1: Zero Available resources -> VALID_BOUNDARY accepted
+    f1 = cases[0]
+    is_v, msg, kind = validate_configuration(f1["allocation"], f1["maximum"], f1["available"])
+    assert is_v is True
+    assert kind == "VALID_BOUNDARY"
+
+    # F2: Zero remaining Need -> VALID_BOUNDARY accepted
+    f2 = cases[1]
+    is_v, msg, kind = validate_configuration(f2["allocation"], f2["maximum"], f2["available"])
+    assert is_v is True
+    assert kind == "VALID_BOUNDARY"
+
+    # F3: Allocation > Maximum -> INVALID rejected
+    f3 = cases[2]
+    is_v, msg, kind = validate_configuration(f3["allocation"], f3["maximum"], f3["available"])
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "P0" in msg and "exceeds" in msg
+
+    # F4: Negative Request Vector -> INVALID rejected
+    f4 = cases[3]
+    is_v, msg, kind = validate_request(0, f4["request"], 5, 3)
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "Negative" in msg
+
+    # F5: Invalid Process ID P99 -> INVALID rejected
+    f5 = cases[4]
+    is_v, msg, kind = validate_process_id(f5["process_idx"], 5)
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "out of range" in msg or "Invalid process ID" in msg
+
+    # F6: Wrong Vector Length -> INVALID rejected
+    f6 = cases[5]
+    is_v, msg, kind = validate_request(0, f6["request"], 5, 3)
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "Expected length" in msg or "length" in msg
+
+
+def test_streamlit_scenario_switching_and_distinct_results():
+    """
+    Streamlit UI Test: Verifies that scenario switching loads the correct data,
+    requests do not incorrectly modify state, and deadlock detection does not
+    merely display the Banker's Algorithm result.
+    Verifies that preset buttons A through F produce distinct, correct OS outcomes.
+    """
+    from streamlit.testing.v1 import AppTest
+
+    # --- Test Scenario A ---
+    at_a = AppTest.from_file("app.py").run()
+    btn_a = [b for b in at_a.sidebar.button if b.label == "A: Safe"][0]
+    btn_a.click().run()
+    assert at_a.session_state.active_preset == "A"
+    assert at_a.session_state.main_tab == "🛡️ Deadlock Avoidance (Banker's)"
+    assert at_a.session_state.last_safety_check["is_safe"] is True
+    assert len(at_a.session_state.last_safety_check["safe_sequence"]) == 5
+
+    # --- Test Scenario B ---
+    at_b = AppTest.from_file("app.py").run()
+    btn_b = [b for b in at_b.sidebar.button if b.label == "B: Wait"][0]
+    btn_b.click().run()
+    assert at_b.session_state.active_preset == "B"
+    assert at_b.session_state.main_tab == "🛡️ Deadlock Avoidance (Banker's)"
+    assert at_b.session_state.last_safety_check is None
+    assert at_b.session_state.last_request_outcome is not None
+    assert at_b.session_state.last_request_outcome["outcome"]["status"] == "WAITING"
+    # Allocation unchanged
+    assert np.array_equal(
+        at_b.session_state.last_request_outcome["before_allocation"],
+        at_b.session_state.last_request_outcome["outcome"]["new_allocation"]
+    )
+
+    # --- Test Scenario C ---
+    at_c = AppTest.from_file("app.py").run()
+    btn_c = [b for b in at_c.sidebar.button if b.label == "C: Unsafe"][0]
+    btn_c.click().run()
+    assert at_c.session_state.active_preset == "C"
+    assert at_c.session_state.main_tab == "🛡️ Deadlock Avoidance (Banker's)"
+    assert at_c.session_state.last_safety_check is None
+    assert at_c.session_state.last_request_outcome is not None
+    assert at_c.session_state.last_request_outcome["outcome"]["status"] == "DENIED_UNSAFE"
+    # State restored
+    assert np.array_equal(
+        at_c.session_state.last_request_outcome["before_allocation"],
+        at_c.session_state.last_request_outcome["outcome"]["new_allocation"]
+    )
+
+    # --- Test Scenario D ---
+    at_d = AppTest.from_file("app.py").run()
+    btn_d = [b for b in at_d.sidebar.button if b.label == "D: Detect"][0]
+    btn_d.click().run()
+    assert at_d.session_state.active_preset == "D"
+    assert at_d.session_state.main_tab == "🔍 Deadlock Detection"
+    assert at_d.session_state.det_single_last_result["is_deadlocked"] is True
+    assert at_d.session_state.det_multi_last_result["deadlock"] is True
+
+    # --- Test Scenario E ---
+    at_e = AppTest.from_file("app.py").run()
+    btn_e = [b for b in at_e.sidebar.button if b.label == "E: Prevent"][0]
+    btn_e.click().run()
+    assert at_e.session_state.active_preset == "E"
+    assert at_e.session_state.main_tab == "⚙️ Prevention & Recovery"
+    assert at_e.session_state.active_preset_run[1]["match"] == "PASS"
+
+    # --- Test Scenario F ---
+    at_f = AppTest.from_file("app.py").run()
+    btn_f = [b for b in at_f.sidebar.button if b.label == "F: Bound"][0]
+    btn_f.click().run()
+    assert at_f.session_state.active_preset == "F"
+    assert at_f.session_state.main_tab == "📊 Test Scenarios & Results Table"
+    assert at_f.session_state.active_preset_run[1]["match"] == "PASS"
+
+
+
 
 

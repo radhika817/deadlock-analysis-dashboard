@@ -470,7 +470,11 @@ def handle_resource_request(
     }
 
 
-def format_steps_as_dataframe(steps: List[Dict[str, Any]], resource_labels: Optional[List[str]] = None) -> Any:
+def format_steps_as_dataframe(
+    steps: List[Dict[str, Any]],
+    process_labels: Optional[List[str]] = None,
+    resource_labels: Optional[List[str]] = None
+) -> Any:
     """Helper function to convert steps into a pandas DataFrame."""
     import pandas as pd
     if not steps:
@@ -478,9 +482,11 @@ def format_steps_as_dataframe(steps: List[Dict[str, Any]], resource_labels: Opti
 
     rows = []
     for s in steps:
+        p_idx = s["process"]
+        p_name = process_labels[p_idx] if (process_labels and 0 <= p_idx < len(process_labels)) else f"P{p_idx}"
         rows.append({
             "Step": s["step"],
-            "Process Picked": str(s["process"]),
+            "Process Picked": p_name,
             "Need[i]": str(s["need"]),
             "Work Before": str(s["work_before"]),
             "Allocation Released": str(s["allocation_released"]),
