@@ -37,6 +37,9 @@ from banker import (
     handle_resource_request
 )
 from detection import (
+    detect_single_instance,
+    detect_multi_instance,
+    terminate_process,
     detect_single_instance_deadlock,
     detect_multi_instance_deadlock,
     recover_by_terminating_process_single,
@@ -550,4 +553,134 @@ def test_validation_never_raises_exceptions():
     is_v, msg, kind = validate_request(None, None, 5, 3)
     assert is_v is False
     assert kind == "INVALID"
+
+
+# ============================================================================
+# DETECTION & RECOVERY TESTS
+# ============================================================================
+
+def test_detect_single_instance_circular_wait_2_processes():
+    """
+    Test 2-process circular wait:
+    P1 holds R1, wants R2.
+    P2 holds R2, wants R1.
+    Wait-For Graph has cycle P1 -> P2 -> P1.
+    Must detect deadlock, identify the cycle, and list deadlocked processes.
+    """
+    allocation_edges = [("R1", "P1"), ("R2", "P2")]
+    request_edges = [("P1", "R2"), ("P2", "R1")]
+
+    result = detect_single_instance(allocation_edges, request_edges)
+
+    assert result["deadlock"] is True
+    assert set(result["deadlocked_processes"]) == {"P1", "P2"}
+    assert len(result["cycle"]) == 2
+    assert set(result["cycle"]) == {"P1", "P2"}
+
+
+def test_detect_single_instance_no_deadlock():
+    """
+    Test single-instance no-deadlock case:
+    P1 holds R1, wants R2.
+    P2 holds R2, wants R3.
+    P3 holds R3, wants nothing (can finish and release R3).
+    Wait-For Graph: P1 -> P2 -> P3 (DAG, acyclic).
+    Must return deadlock=False, cycle=[], deadlocked_processes=[].
+    """
+    allocation_edges = [("R1", "P1"), ("R2", "P2"), ("R3", "P3")]
+    request_edges = [("P1", "R2"), ("P2", "R3")]
+
+    result = detect_single_instance(allocation_edges, request_edges)
+
+    assert result["deadlock"] is False
+    assert result["cycle"] == []
+    assert result["deadlocked_processes"] == []
+
+
+def test_detect_multi_instance_deadlock():
+    """
+    Test multi-instance deadlock detection:
+    3 processes (P0, P1, P2) and 2 resource types (R0, R1).
+    Available = [0, 0]
+    Allocation:
+      P0: [1, 0]
+      P1: [0, 1]
+      P2: [0, 0] (holding 0, Finish[2] is True initially)
+    Request:
+      P0: [0, 1] (wants R1, held by P1)
+      P1: [1, 0] (wants R0, held by P0)
+      P2: [0, 0]
+    Both P0 and P1 are deadlocked because Available is [0, 0] and neither can be satisfied.
+    """
+    allocation = np.array([
+        [1, 0],  # P0
+        [0, 1],  # P1
+        [0, 0]   # P2
+    ])
+    request = np.array([
+        [0, 1],  # P0
+        [1, 0],  # P1
+        [0, 0]   # P2
+    ])
+    available = np.array([0, 0])
+
+    result = detect_multi_instance(allocation, request, available)
+
+    assert result["deadlock"] is True
+    assert set(result["deadlocked_processes"]) == {0, 1}
+    assert result["finish"][2] is True
+    assert result["finish"][0] is False
+    assert result["finish"][1] is False
+    assert "work_updates" in result
+    assert "steps" in result
+
+
+def test_recovery_by_terminating_process_makes_others_finish():
+    """
+    Test recovery by process termination:
+    In the multi-instance deadlock above, terminating P0 releases its resources [1, 0].
+    Available increases from [0, 0] to [1, 0].
+    Then P1 (requesting [1, 0]) can satisfy its request, execute, and finish.
+    All processes finish and deadlock is resolved!
+    """
+    allocation = np.array([
+        [1, 0],  # P0
+        [0, 1],  # P1
+        [0, 0]   # P2
+    ])
+    request = np.array([
+        [0, 1],  # P0
+        [1, 0],  # P1
+        [0, 0]   # P2
+    ])
+    available = np.array([0, 0])
+
+    # Initial detection confirms deadlock
+    init_res = detect_multi_instance(allocation, request, available)
+    assert init_res["deadlock"] is True
+    assert set(init_res["deadlocked_processes"]) == {0, 1}
+
+    # Terminate process 0 to recover
+    term_res = terminate_process(0, allocation, request, available)
+
+    assert term_res["released"] == [1, 0]
+    assert np.array_equal(term_res["available"], [1, 0])
+    assert np.array_equal(term_res["allocation"][0], [0, 0])
+    assert np.array_equal(term_res["request"][0], [0, 0])
+
+    # Re-run multi-instance detection on the post-termination state
+    post_res = detect_multi_instance(
+        term_res["allocation"],
+        term_res["request"],
+        term_res["available"]
+    )
+
+    # Deadlock must be resolved!
+    assert post_res["deadlock"] is False
+    assert post_res["deadlocked_processes"] == []
+    # P1 completed in step 1 and released [0, 1], final work is [1, 1]
+    assert post_res["work"] == [1, 1]
+    assert len(post_res["steps"]) == 1
+    assert post_res["steps"][0]["process"] == 1
+
 

@@ -21,7 +21,7 @@ This module implements:
 All logic is independent of the UI and includes comprehensive docstrings for viva preparation.
 """
 
-from typing import Dict, List, Optional, Tuple, Any, Set
+from typing import Dict, List, Optional, Tuple, Any, Set, Union
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -108,6 +108,93 @@ def build_wait_for_graph(
                 wfg.add_edge(pi, pk)
 
     return wfg
+
+
+def detect_single_instance(
+    allocation_edges: List[Tuple[str, str]],
+    request_edges: List[Tuple[str, str]]
+) -> Dict[str, Any]:
+    """
+    Detects deadlock in a single-instance resource allocation system using NetworkX.
+
+    Builds the Wait-For Graph (WFG) from allocation and request edges:
+    - Allocation edge: Resource R is allocated to Process P (or P holds R).
+    - Request edge: Process P requests Resource R.
+    - If Process Pi requests Resource Rj, and Resource Rj is currently held by Process Pk (Pi != Pk),
+      a directed edge Pi -> Pk is added to the Wait-For Graph.
+    - In a single-instance system, a directed cycle in the Wait-For Graph is
+      necessary and sufficient for deadlock.
+
+    Args:
+        allocation_edges: List of (Resource, Process) or (Process, Resource) tuples.
+        request_edges: List of (Process, Resource) or (Resource, Process) tuples.
+
+    Returns:
+        dict with:
+        - 'deadlock': bool (True if a cycle exists, False otherwise)
+        - 'cycle': list of process nodes forming the first detected cycle (or empty list if no cycle)
+        - 'deadlocked_processes': list of all process nodes involved in any cycle
+    """
+    wfg = nx.DiGraph()
+    resource_holder: Dict[str, str] = {}
+    all_processes: Set[str] = set()
+
+    # Parse and normalize allocation edges
+    for edge in allocation_edges:
+        u, v = str(edge[0]).strip(), str(edge[1]).strip()
+        # Disambiguate if names indicate type
+        if u.upper().startswith("P") and v.upper().startswith("R"):
+            proc, res = u, v
+        elif u.upper().startswith("R") and v.upper().startswith("P"):
+            res, proc = u, v
+        else:
+            # Default convention: (Resource, Process)
+            res, proc = u, v
+        resource_holder[res] = proc
+        all_processes.add(proc)
+
+    # Parse and normalize request edges
+    normalized_requests: List[Tuple[str, str]] = []
+    for edge in request_edges:
+        u, v = str(edge[0]).strip(), str(edge[1]).strip()
+        if u.upper().startswith("R") and v.upper().startswith("P"):
+            res, proc = u, v
+        else:
+            # Default convention: (Process, Resource)
+            proc, res = u, v
+        normalized_requests.append((proc, res))
+        all_processes.add(proc)
+
+    # Add all processes to WFG
+    for p in all_processes:
+        wfg.add_node(p)
+
+    # Add directed edges in WFG: Pi -> Pk
+    for p_req, r_req in normalized_requests:
+        if r_req in resource_holder:
+            p_holder = resource_holder[r_req]
+            if p_req != p_holder:
+                wfg.add_edge(p_req, p_holder)
+
+    # Detect cycles with NetworkX
+    cycles = list(nx.simple_cycles(wfg))
+    deadlocked_set: Set[str] = set()
+    for c in cycles:
+        for node in c:
+            deadlocked_set.add(node)
+
+    deadlocked_processes = sorted(list(deadlocked_set))
+    deadlock = len(deadlocked_processes) > 0
+    first_cycle = list(cycles[0]) if deadlock else []
+
+    return {
+        "deadlock": deadlock,
+        "cycle": first_cycle,
+        "deadlocked_processes": deadlocked_processes,
+        "cycles": cycles,
+        "is_deadlocked": deadlock,
+        "wfg": wfg
+    }
 
 
 def detect_single_instance_deadlock(
@@ -276,6 +363,98 @@ def draw_graphs_to_figure(
 # ============================================================================
 # 2. MULTIPLE-INSTANCE DETECTION (MATRIX METHOD)
 # ============================================================================
+
+def detect_multi_instance(
+    allocation: Union[List[List[int]], np.ndarray],
+    request: Union[List[List[int]], np.ndarray],
+    available: Union[List[int], np.ndarray]
+) -> Dict[str, Any]:
+    """
+    Executes the classic multiple-instance deadlock detection algorithm.
+
+    Algorithm:
+    1. Work = Available (copy).
+    2. For i = 0, ..., n-1:
+         Finish[i] = True if Allocation[i] is all zeros else False.
+         (A process holding zero resources cannot cause a deadlock).
+    3. Find an index i such that:
+         Finish[i] == False and Request[i] <= Work.
+       If found:
+         Work += Allocation[i]
+         Finish[i] = True
+         Record step and Work update.
+         Repeat step 3.
+    4. Any process with Finish[i] == False at the end is DEADLOCKED.
+
+    Args:
+        allocation: 2D array-like of shape (n_processes, n_resources) with allocations.
+        request: 2D array-like of shape (n_processes, n_resources) with requests.
+        available: 1D array-like of shape (n_resources) with currently available resources.
+
+    Returns:
+        dict with:
+        - 'deadlock': bool (True if any process is deadlocked, False otherwise)
+        - 'deadlocked_processes': list of process indices that are deadlocked
+        - 'deadlocked': list of deadlocked process indices
+        - 'steps': list of dicts recording each execution step (step, process, request, work_before, released, work_after)
+        - 'work_updates': list of Work vectors after each step (including initial Work)
+        - 'work': final Work vector as a list
+        - 'finish': list of boolean finish flags for each process
+    """
+    alloc_arr = np.array(allocation, dtype=int).copy()
+    req_arr = np.array(request, dtype=int).copy()
+    work = np.array(available, dtype=int).flatten().copy()
+
+    n_proc, n_res = alloc_arr.shape
+
+    # Step 2: Finish[i] = True if Allocation[i] is all zeros else False
+    finish = [bool(np.all(alloc_arr[i] == 0)) for i in range(n_proc)]
+
+    work_updates = [work.tolist()]
+    steps: List[Dict[str, Any]] = []
+    step_num = 1
+
+    while True:
+        found = False
+        for i in range(n_proc):
+            if not finish[i]:
+                # Find i with Finish[i] == False and Request[i] <= Work
+                if np.all(req_arr[i] <= work):
+                    work_before = work.copy()
+                    released = alloc_arr[i].copy()
+                    work = work + released
+                    finish[i] = True
+                    found = True
+                    work_updates.append(work.tolist())
+                    steps.append({
+                        "step": step_num,
+                        "process": int(i),
+                        "request": req_arr[i].tolist(),
+                        "work_before": work_before.tolist(),
+                        "released": released.tolist(),
+                        "work_after": work.tolist()
+                    })
+                    step_num += 1
+                    break
+        if not found:
+            break
+
+    # Any process with Finish False at the end is deadlocked
+    deadlocked = [int(i) for i in range(n_proc) if not finish[i]]
+    is_deadlocked = len(deadlocked) > 0
+
+    return {
+        "deadlock": is_deadlocked,
+        "deadlocked_processes": deadlocked,
+        "deadlocked": deadlocked,
+        "steps": steps,
+        "work_updates": work_updates,
+        "work": work.tolist(),
+        "final_work": work.tolist(),
+        "finish": finish,
+        "is_deadlocked": is_deadlocked
+    }
+
 
 def detect_multi_instance_deadlock(
     allocation: np.ndarray,
@@ -512,3 +691,77 @@ def recover_by_terminating_process_multi(
             )
         )
     }
+
+
+def terminate_process(
+    process_id: Union[int, str],
+    allocation: Union[List[List[int]], np.ndarray],
+    request: Union[List[List[int]], np.ndarray],
+    available: Union[List[int], np.ndarray]
+) -> Dict[str, Any]:
+    """
+    Terminates a process in a multiple-instance system and reclaims its allocated resources.
+
+    When a process is terminated for deadlock recovery:
+    1. Its allocated resources are returned to the available pool:
+       new_available = available + allocation[process_id]
+    2. Its row in Allocation is cleared to zeros (no longer holding resources).
+    3. Its row in Request is cleared to zeros (no longer requesting resources).
+
+    Args:
+        process_id: int index of the process, or string label (e.g. 0 or 'P0').
+        allocation: 2D array-like of allocations (n_processes x n_resources).
+        request: 2D array-like of requests (n_processes x n_resources).
+        available: 1D array-like of available resources (n_resources).
+
+    Returns:
+        dict with:
+        - 'allocation': updated allocation matrix with process_id's allocation cleared
+        - 'request': updated request matrix with process_id's request cleared
+        - 'available': updated available vector with released resources added
+        - 'released_resources': vector/list of resources released by the terminated process
+        - 'released': alias for released_resources
+        - 'process_id': int index of the terminated process
+        - 'new_allocation': alias for allocation
+        - 'new_request': alias for request
+        - 'new_available': alias for available
+    """
+    alloc_arr = np.array(allocation, dtype=int).copy()
+    req_arr = np.array(request, dtype=int).copy()
+    avail_arr = np.array(available, dtype=int).flatten().copy()
+
+    # Parse process_id if string (e.g. "P0" -> 0)
+    if isinstance(process_id, str):
+        cleaned = process_id.strip().upper()
+        if cleaned.startswith("P") and cleaned[1:].isdigit():
+            p_id = int(cleaned[1:])
+        elif cleaned.isdigit():
+            p_id = int(cleaned)
+        else:
+            raise ValueError(f"Invalid process_id string: {process_id}")
+    else:
+        p_id = int(process_id)
+
+    if p_id < 0 or p_id >= alloc_arr.shape[0]:
+        raise ValueError(f"Process ID {p_id} out of bounds for allocation with {alloc_arr.shape[0]} processes.")
+
+    # Reclaim allocated resources
+    released = alloc_arr[p_id].copy()
+    new_avail = avail_arr + released
+
+    # Clear terminated process allocations and requests
+    alloc_arr[p_id] = 0
+    req_arr[p_id] = 0
+
+    return {
+        "allocation": alloc_arr,
+        "request": req_arr,
+        "available": new_avail,
+        "released_resources": released.tolist(),
+        "released": released.tolist(),
+        "process_id": p_id,
+        "new_allocation": alloc_arr,
+        "new_request": req_arr,
+        "new_available": new_avail
+    }
+
