@@ -264,12 +264,17 @@ def render_unsafe_concept_panel():
     """, unsafe_allow_html=True)
 
 
-def make_figure_dark_friendly(fig: plt.Figure, bg_color: str = "#0E1117", card_bg: str = "#1A1F2B", text_color: str = "#FAFAFA") -> plt.Figure:
+def make_figure_dark_friendly(fig: plt.Figure, is_dark: bool = True) -> plt.Figure:
     """
-    Styles a Matplotlib figure and its axes for seamless dark theme display.
-    Eliminates the bright white box background, colors titles & legends with light text,
+    Styles a Matplotlib figure and its axes for seamless dark or light theme display.
+    Eliminates bright white box backgrounds in dark mode, colors titles & legends appropriately,
     and preserves high-contrast red deadlock cycle highlighting.
     """
+    bg_color = "#0E1117" if is_dark else "#FFFFFF"
+    card_bg = "#1A1F2B" if is_dark else "#F8FAFC"
+    text_color = "#FAFAFA" if is_dark else "#0F172A"
+    edge_color = "#334155" if is_dark else "#CBD5E1"
+
     fig.patch.set_facecolor(bg_color)
     for ax in fig.get_axes():
         ax.set_facecolor(bg_color)
@@ -277,7 +282,7 @@ def make_figure_dark_friendly(fig: plt.Figure, bg_color: str = "#0E1117", card_b
         leg = ax.get_legend()
         if leg:
             leg.get_frame().set_facecolor(card_bg)
-            leg.get_frame().set_edgecolor("#334155")
+            leg.get_frame().set_edgecolor(edge_color)
             for text in leg.get_texts():
                 text.set_color(text_color)
         for spine in ax.spines.values():
@@ -337,7 +342,98 @@ initialize_session_state()
 
 st.sidebar.title("⚙️ System Configuration")
 st.sidebar.caption("Configure processes, resources, or edit matrices directly.")
-st.sidebar.info("🌓 Change theme anytime from the top-right menu: **Settings > Theme**.")
+
+# Interactive In-App Theme Switcher
+selected_theme = st.sidebar.radio(
+    "🌓 Appearance Theme",
+    ["Dark Mode", "Light Mode"],
+    index=0 if st.session_state.get("theme_mode", "Dark Mode") == "Dark Mode" else 1,
+    horizontal=True,
+    key="theme_mode_radio"
+)
+st.session_state.theme_mode = selected_theme
+is_dark = (selected_theme == "Dark Mode")
+
+if not is_dark:
+    st.markdown("""
+    <style>
+        .stApp {
+            background-color: #FFFFFF !important;
+            color: #0F172A !important;
+        }
+        [data-testid="stSidebar"] {
+            background-color: #F8FAFC !important;
+        }
+        [data-testid="stSidebar"] * {
+            color: #0F172A !important;
+        }
+        .main-title {
+            background: linear-gradient(135deg, #1E3A8A 0%, #2563EB 100%) !important;
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+        }
+        .sub-title {
+            color: #475569 !important;
+        }
+        .concept-card {
+            background-color: #FFFBEB !important;
+            border: 1px solid #FCD34D !important;
+            border-left: 6px solid #D97706 !important;
+            color: #78350F !important;
+        }
+        .concept-card h4 {
+            color: #9A3412 !important;
+        }
+        .concept-card p, .concept-card li, .concept-card strong {
+            color: #78350F !important;
+        }
+        .footer-note {
+            background-color: #F1F5F9 !important;
+            color: #475569 !important;
+            border: 1px solid #E2E8F0 !important;
+        }
+        /* Status banners in light theme */
+        .status-safe {
+            background-color: #ECFDF5 !important;
+            color: #065F46 !important;
+            border: 1px solid #A7F3D0 !important;
+            border-left: 6px solid #10B981 !important;
+        }
+        .status-safe * { color: #065F46 !important; }
+        
+        .status-unsafe {
+            background-color: #FFF7ED !important;
+            color: #9A3412 !important;
+            border: 1px solid #FED7AA !important;
+            border-left: 6px solid #EA580C !important;
+        }
+        .status-unsafe * { color: #9A3412 !important; }
+        
+        .status-waiting {
+            background-color: #EFF6FF !important;
+            color: #1E40AF !important;
+            border: 1px solid #BFDBFE !important;
+            border-left: 6px solid #3B82F6 !important;
+        }
+        .status-waiting * { color: #1E40AF !important; }
+        
+        .status-deadlock {
+            background-color: #FEF2F2 !important;
+            color: #991B1B !important;
+            border: 1px solid #FECACA !important;
+            border-left: 6px solid #EF4444 !important;
+        }
+        .status-deadlock * { color: #991B1B !important; }
+        
+        .status-invalid {
+            background-color: #F8FAFC !important;
+            color: #334155 !important;
+            border: 1px solid #CBD5E1 !important;
+            border-left: 6px solid #94A3B8 !important;
+        }
+        .status-invalid * { color: #334155 !important; }
+    </style>
+    """, unsafe_allow_html=True)
 
 # Reset Button
 if st.sidebar.button("🔄 Reset to Classic Example", type="secondary", use_container_width=True):
@@ -951,7 +1047,7 @@ with tab_detection:
             # Draw Graphs using NetworkX + Matplotlib (highlighting cycle in red!)
             st.markdown("#### Graphical Visualization (RAG and WFG)")
             fig = draw_graphs_to_figure(det_res["rag"], det_res["wfg"], det_res["cycles"])
-            st.pyplot(make_figure_dark_friendly(fig))
+            st.pyplot(make_figure_dark_friendly(fig, is_dark=(st.session_state.get("theme_mode", "Dark Mode") == "Dark Mode")))
 
             # Single-Instance Recovery Section
             if det_res["is_deadlocked"]:
@@ -1003,7 +1099,7 @@ with tab_detection:
                         rec_res["new_cycles"],
                         title_suffix="(Post-Recovery: Cycle Broken)"
                     )
-                    st.pyplot(make_figure_dark_friendly(fig_post))
+                    st.pyplot(make_figure_dark_friendly(fig_post, is_dark=(st.session_state.get("theme_mode", "Dark Mode") == "Dark Mode")))
 
     else:
         # Multiple-Instance Model
