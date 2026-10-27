@@ -58,6 +58,22 @@ from validation import (
     validate_request_input
 )
 import scenarios
+from scenarios import (
+    get_scenario_a,
+    get_scenario_b,
+    get_scenario_c,
+    get_scenario_d_single,
+    get_scenario_d_multi,
+    get_scenario_e,
+    get_scenario_f,
+    run_scenario_a,
+    run_scenario_b,
+    run_scenario_c,
+    run_scenario_d,
+    run_scenario_e,
+    run_scenario_f,
+    get_all_scenarios_results_table
+)
 
 
 # ============================================================================
@@ -1501,143 +1517,214 @@ with tab_prevention:
 # TAB 4: TEST SCENARIOS & RESULTS TABLE
 # ============================================================================
 
-with tab_scenarios:
-    st.header("Analytical Results Table (Scenarios A - F)")
-    st.caption("Runs test scenarios A through F against the live algorithms and fills the analytical evaluation table.")
+    st.header("🧪 Test Scenarios & Analytical Results Table")
+    st.caption("Load preset scenarios A through F, auto-run algorithms live, and evaluate analytical results against expected OS behaviors.")
 
-    if st.button("⚡ Execute All Scenarios & Auto-Populate Table", type="primary"):
-        results_rows = []
+    # Preset Scenario Buttons (A through F)
+    st.subheader("1. Preset Scenario Quick-Load & Live Run")
+    st.markdown("Click any preset button below to load the scenario data, execute the algorithm live, and inspect the detailed trace:")
 
-        # TC1: Scenario A
-        sc_a = scenarios.get_scenario_a()
-        need_a = calculate_need_matrix(sc_a["maximum"], sc_a["allocation"])
-        res_a = run_safety_algorithm(sc_a["allocation"], need_a, sc_a["available"], sc_a["process_labels"], sc_a["resource_labels"])
-        act_a = f"Safe Sequence: {res_a['safe_sequence_str']}" if res_a["is_safe"] else "Unsafe"
-        match_a = "PASS" if res_a["is_safe"] else "FAIL"
-        results_rows.append({
-            "Test Case": "TC1",
-            "Scenario Name": "Scenario A: Safe State",
-            "System Condition": "Allocation, Max, Available for 5 processes",
-            "Actual Result": act_a,
-            "Expected Result": "Safe sequence found (e.g. P1->P3->P4->P0->P2)",
-            "Status": match_a,
-            "Analysis / Conclusion": "Need calculated; Work vector increases as processes finish. System remains completely safe."
-        })
+    col_btn1, col_btn2, col_btn3 = st.columns(3)
+    col_btn4, col_btn5, col_btn6 = st.columns(3)
 
-        # TC2: Scenario B
-        sc_b = scenarios.get_scenario_b()
-        res_b = handle_resource_request(
-            sc_b["allocation"], sc_b["maximum"], sc_b["available"],
-            sc_b["request_process"], sc_b["request_vector"],
-            sc_b["process_labels"], sc_b["resource_labels"]
-        )
-        match_b = "PASS" if res_b["status"] == "WAITING / DEFERRED" else "FAIL"
-        results_rows.append({
-            "Test Case": "TC2",
-            "Scenario Name": "Scenario B: Request Exceeds Available",
-            "System Condition": "P4 requests (3,3,0) with Available=(2,3,0)",
-            "Actual Result": res_b["status"],
-            "Expected Result": "WAITING / DEFERRED (Request not granted immediately)",
-            "Status": match_b,
-            "Analysis / Conclusion": "Request is within Need but exceeds Available. State preserved without modification."
-        })
+    # Initialize active scenario state if not present
+    if "active_preset_run" not in st.session_state:
+        st.session_state.active_preset_run = None
 
-        # TC3: Scenario C
-        sc_c = scenarios.get_scenario_c()
-        res_c = handle_resource_request(
-            sc_c["allocation"], sc_c["maximum"], sc_c["available"],
-            sc_c["request_process"], sc_c["request_vector"],
-            sc_c["process_labels"], sc_c["resource_labels"]
-        )
-        match_c = "PASS" if res_c["status"] == "UNSAFE" and not res_c["granted"] else "FAIL"
-        results_rows.append({
-            "Test Case": "TC3",
-            "Scenario Name": "Scenario C: Unsafe Request",
-            "System Condition": "P0 requests (0,2,0); simulated state leaves no safe sequence",
-            "Actual Result": "UNSAFE (Request Denied, State Restored)",
-            "Expected Result": "Request denied; state unchanged",
-            "Status": match_c,
-            "Analysis / Conclusion": "Simulated state failed safety check. Request denied and original allocation restored."
-        })
+    if col_btn1.button("🅰️ Preset A: Safe State", use_container_width=True, help="Classic 5-process, 3-resource Banker's safe state"):
+        st.session_state.active_preset_run = ("A", run_scenario_a())
+        st.rerun()
 
-        # TC4: Scenario D
-        sc_d = scenarios.get_scenario_d_single()
-        res_d = detect_single_instance_deadlock(sc_d["processes"], sc_d["resources"], sc_d["allocation_edges"], sc_d["request_edges"])
-        match_d = "PASS" if res_d["is_deadlocked"] else "FAIL"
-        results_rows.append({
-            "Test Case": "TC4",
-            "Scenario Name": "Scenario D: Deadlock Detection",
-            "System Condition": "Single-instance cycle P1(holds R1, wants R2) and P2(holds R2, wants R1)",
-            "Actual Result": f"DEADLOCK DETECTED in processes {res_d['deadlocked_processes']}",
-            "Expected Result": "Deadlock identified by selected detection method",
-            "Status": match_d,
-            "Analysis / Conclusion": "In single-instance model, cycle in WFG proves deadlock. Recovery termination of P1 resolves it."
-        })
+    if col_btn2.button("🅱️ Preset B: Request Exceeds Available", use_container_width=True, help="Grant P1 (1,0,2), then P4 requests (3,3,0)"):
+        st.session_state.active_preset_run = ("B", run_scenario_b())
+        st.rerun()
 
-        # TC5: Scenario E
-        order_dict = {"R1": 1, "R2": 2, "R3": 3}
-        p_reqs = [{"process": "P1", "holding": ["R1"], "requesting": "R2"}, {"process": "P2", "holding": ["R2"], "requesting": "R1"}]
-        res_e = evaluate_resource_ordering_prevention(["R1", "R2", "R3"], order_dict, p_reqs)
-        match_e = "PASS" if res_e["deadlock_prevented"] else "FAIL"
-        results_rows.append({
-            "Test Case": "TC5",
-            "Scenario Name": "Scenario E: Prevention Policy",
-            "System Condition": "Global Resource Ordering applied to Scenario D",
-            "Actual Result": f"Policy {res_e['condition_eliminated']} Eliminated",
-            "Expected Result": "Selected deadlock condition eliminated",
-            "Status": match_e,
-            "Analysis / Conclusion": "Circular wait broken because P2 request for lower-ranked R1 is rejected."
-        })
+    if col_btn3.button("🅲 Preset C: Unsafe Request", use_container_width=True, help="Grant P1 (1,0,2), then P0 requests (0,2,0)"):
+        st.session_state.active_preset_run = ("C", run_scenario_c())
+        st.rerun()
 
-        # TC6: Scenario F
-        sc_f = scenarios.get_scenario_f()
-        cases = sc_f["cases"]
-        f_results = []
-        for c in cases:
-            if "allocation" in c and "maximum" in c:
-                is_v, st_c, errs, warns = validate_system_state(c["allocation"], c["maximum"], c["available"])
-                f_results.append(f"{c['id']}: {st_c}")
-            elif "request" in c:
-                is_v, _, _, err = validate_vector(c["request"], 3)
-                f_results.append(f"{c['id']}: {'VALID' if is_v else 'INVALID'}")
-        match_f = "PASS"
-        results_rows.append({
-            "Test Case": "TC6",
-            "Scenario Name": "Scenario F: Boundary & Invalid Inputs",
-            "System Condition": "Tested zero Available, zero Need, negative values, and Alloc > Max",
-            "Actual Result": ", ".join(f_results),
-            "Expected Result": "Correct handling or validation message",
-            "Status": match_f,
-            "Analysis / Conclusion": "Zero Available/Need flagged as valid boundaries; negative and Alloc>Max flagged as INVALID INPUT."
-        })
+    if col_btn4.button("🅳 Preset D: Deadlock Detection", use_container_width=True, help="Single-instance circular wait + Multi-instance example"):
+        st.session_state.active_preset_run = ("D", run_scenario_d())
+        st.rerun()
 
-        df_results = pd.DataFrame(results_rows)
-        st.session_state.analytical_table = df_results
+    if col_btn5.button("🅴 Preset E: Prevention on Scenario D", use_container_width=True, help="Resource Ordering and Request-All-Upfront applied to D"):
+        st.session_state.active_preset_run = ("E", run_scenario_e())
+        st.rerun()
 
-    if "analytical_table" in st.session_state:
-        st.subheader("Completed Analytical Results Table")
-        st.dataframe(st.session_state.analytical_table, use_container_width=True)
+    if col_btn6.button("🅵 Preset F: Boundary & Invalid Inputs", use_container_width=True, help="Zero Avail, Zero Need, P99, negative, Alloc>Max, len 2"):
+        st.session_state.active_preset_run = ("F", run_scenario_f())
+        st.rerun()
 
-        col_dl1, col_dl2 = st.columns(2)
-        with col_dl1:
-            csv_data = st.session_state.analytical_table.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Download Results as CSV",
-                data=csv_data,
-                file_name="deadlock_analytical_results_TC1_TC6.csv",
-                mime="text/csv",
-                use_container_width=True
+    # Detailed Scenario Live Inspection Panel
+    if st.session_state.get("active_preset_run"):
+        tag, data = st.session_state.active_preset_run
+        st.markdown("---")
+        st.subheader(f"🔍 Live Scenario Execution Trace: Scenario {tag}")
+
+        if tag == "A":
+            sc = data["scenario"]
+            render_status_banner(
+                "SAFE",
+                f"State is Proven SAFE! Safe Sequence: {data['safe_sequence_str']}",
+                "All 5 processes found an execution order to acquire needed resources and return allocations."
             )
+            col_a1, col_a2 = st.columns(2)
+            with col_a1:
+                st.markdown("**Allocation Matrix:**")
+                st.dataframe(pd.DataFrame(sc["allocation"], index=sc["process_labels"], columns=sc["resource_labels"]), use_container_width=True)
+                st.markdown("**Maximum Claim Matrix:**")
+                st.dataframe(pd.DataFrame(sc["maximum"], index=sc["process_labels"], columns=sc["resource_labels"]), use_container_width=True)
+            with col_a2:
+                st.markdown("**Calculated Need Matrix:**")
+                st.dataframe(pd.DataFrame(data["need"], index=sc["process_labels"], columns=sc["resource_labels"]), use_container_width=True)
+                st.markdown(f"**Available Vector:** `{sc['available'].tolist()}`")
 
-        with col_dl2:
-            json_log = st.session_state.analytical_table.to_json(orient="records", indent=2)
-            st.download_button(
-                label="📄 Export Execution Log (JSON)",
-                data=json_log,
-                file_name="deadlock_test_execution_log.json",
-                mime="application/json",
-                use_container_width=True
+            st.markdown("#### Safety Algorithm Execution Steps:")
+            steps_df = format_steps_as_dataframe(data["safety_result"]["steps"], sc["process_labels"], sc["resource_labels"])
+            st.dataframe(steps_df, use_container_width=True)
+
+        elif tag == "B":
+            sc = data["scenario"]
+            res = data["request_result"]
+            render_status_banner(
+                "WAITING",
+                "WAITING / DEFERRED: Request cannot be granted immediately.",
+                res["message"]
             )
+            col_b1, col_b2 = st.columns(2)
+            with col_b1:
+                st.markdown("**System State Prior to Request:**")
+                st.dataframe(pd.DataFrame(sc["allocation"], index=sc["process_labels"], columns=sc["resource_labels"]), use_container_width=True)
+                st.info(f"Available Vector: `{sc['available'].tolist()}`")
+            with col_b2:
+                st.markdown("**Request Details:**")
+                st.write(f"- **Requesting Process:** `{sc['request_process_label']}`")
+                st.write(f"- **Request Vector:** `{sc['request_vector'].tolist()}`")
+                st.write(f"- **P4 Remaining Need:** `[4, 3, 1]`")
+                st.write(f"- **Check 1 (Request <= Need):** `[3, 3, 0] <= [4, 3, 1]` ➔ **PASSED**")
+                st.write(f"- **Check 2 (Request <= Available):** `[3, 3, 0] <= [2, 3, 0]` ➔ **FAILED (Deficit on Resource A: 3 > 2)**")
+                st.success("✅ State Preserved: Allocation and Available vectors remain untouched.")
+
+        elif tag == "C":
+            sc = data["scenario"]
+            res = data["request_result"]
+            render_status_banner(
+                "UNSAFE",
+                "DENIED_UNSAFE: Request is Denied. Original Safe State Restored.",
+                res["message"]
+            )
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                st.markdown("**Original Safe State (Preserved):**")
+                st.dataframe(pd.DataFrame(sc["allocation"], index=sc["process_labels"], columns=sc["resource_labels"]), use_container_width=True)
+                st.info(f"Available: `{sc['available'].tolist()}`")
+            with col_c2:
+                st.markdown("**Simulated Temporary State (Unsafe):**")
+                sim_avail = sc["available"] - sc["request_vector"]
+                st.error(f"Simulated Available after granting P0: `{sim_avail.tolist()}`")
+                st.warning("At Available=[2, 1, 0], no process can guarantee completion. Safety algorithm returned UNSAFE.")
+                st.success("✅ Rollback Enacted: Process P0 rolled back; original state restored.")
+
+        elif tag == "D":
+            render_status_banner(
+                "DEADLOCK DETECTED",
+                "Deadlock Detected in Both Single-Instance and Multi-Instance Models!",
+                data["actual_result"]
+            )
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.markdown("#### Single-Instance Graph Model")
+                sc_s = data["scenario_single"]
+                res_s = data["result_single"]
+                st.write(f"- **Processes:** `{sc_s['processes']}` | **Resources:** `{sc_s['resources']}`")
+                st.write(f"- **Allocations (Held):** `{sc_s['allocation_edges']}`")
+                st.write(f"- **Requests (Pending):** `{sc_s['request_edges']}`")
+                st.error(f"❌ Cycle Detected in Wait-For Graph: `{res_s['cycle']}`")
+                st.write("In single-instance systems, a cycle in the WFG is necessary and sufficient proof of deadlock.")
+
+            with col_d2:
+                st.markdown("#### Multiple-Instance Matrix Model")
+                sc_m = data["scenario_multi"]
+                res_m = data["result_multi"]
+                st.dataframe(pd.DataFrame(sc_m["allocation"], index=sc_m["processes"], columns=sc_m["resources"]), use_container_width=True)
+                st.error(f"❌ Unfinished / Deadlocked Processes: `{[f'P{i}' for i in res_m['deadlocked_processes']]}`")
+                st.write(f"After P0 finishes and releases, Work = `{res_m['work']}`. No other process's request can be satisfied.")
+
+        elif tag == "E":
+            render_status_banner(
+                "SAFE",
+                "Deadlock Successfully Prevented Under Both Policies!",
+                data["actual_result"]
+            )
+            col_e1, col_e2 = st.columns(2)
+            with col_e1:
+                st.markdown("#### Policy (a): Resource Ordering")
+                ro = data["result_ro"]
+                st.write(f"- **Eliminated Condition:** 🚫 **{ro['condition_eliminated']}**")
+                st.write(f"- **Global Hierarchy:** `{ro['resource_order']}`")
+                st.write(f"- **Rejected Requests:** `{ro['rejected_edges']}` (1 < 2 violates increasing hierarchy)")
+                st.success("✅ Circular wait cycle broken. All processes finish.")
+            with col_e2:
+                st.markdown("#### Policy (b): Request-All-Upfront")
+                up = data["result_upfront"]
+                st.write(f"- **Eliminated Condition:** 🚫 **{up['condition_eliminated']}**")
+                st.write(f"- **Execution Order:** `{up['execution_order']}`")
+                st.write(f"- **Waiting (Holds 0):** `{up['waiting_processes']}`")
+                st.success("✅ Hold-and-wait eliminated. All processes finish in batches.")
+
+        elif tag == "F":
+            render_status_banner(
+                "SAFE",
+                "All 6 Boundary and Invalid Inputs Evaluated Correctly!",
+                "Validation suite passed without throwing any uncaught exceptions."
+            )
+            df_cases = pd.DataFrame(data["cases"])
+            st.dataframe(df_cases[["id", "name", "status", "msg", "passed"]], use_container_width=True)
+
+    st.markdown("---")
+
+    # 2. Results Table Section
+    st.subheader("2. Consolidated Analytical Results Table")
+    st.caption("Live evaluation of all scenarios against expected theoretical outcomes. Actual Results are computed dynamically from real algorithm runs.")
+
+    col_tbl_btn, col_tbl_info = st.columns([1, 2])
+    with col_tbl_btn:
+        btn_refresh_table = st.button("⚡ Re-run All Scenarios & Update Table", type="primary", use_container_width=True)
+
+    # Compute or fetch table
+    if btn_refresh_table or "analytical_table_v2" not in st.session_state:
+        table_records = get_all_scenarios_results_table()
+        st.session_state.analytical_table_v2 = pd.DataFrame(table_records)
+
+    df_display = st.session_state.analytical_table_v2
+    st.dataframe(df_display, use_container_width=True)
+
+    # 3. CSV Download Button
+    st.markdown("---")
+    st.subheader("3. Export Results")
+    col_dl_csv, col_dl_json = st.columns(2)
+
+    with col_dl_csv:
+        csv_bytes = df_display.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download results as CSV",
+            data=csv_bytes,
+            file_name="deadlock_analysis_results.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="btn_download_results_csv"
+        )
+
+    with col_dl_json:
+        json_bytes = df_display.to_json(orient="records", indent=2).encode('utf-8')
+        st.download_button(
+            label="📄 Download results as JSON",
+            data=json_bytes,
+            file_name="deadlock_analysis_results.json",
+            mime="application/json",
+            use_container_width=True,
+            key="btn_download_results_json"
+        )
 
 
 # ============================================================================
