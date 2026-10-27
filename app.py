@@ -1204,85 +1204,297 @@ with tab_detection:
 # ============================================================================
 
 with tab_prevention:
-    st.header("Deadlock Prevention Policies & Trade-off Analysis")
+    st.header("🛡️ Deadlock Prevention & Quantitative Trade-offs")
     st.caption("Deadlock prevention eliminates at least one of the four necessary Coffman conditions at design time.")
 
     # Educational Coffman Overview
-    st.subheader("The Four Coffman Conditions")
+    st.subheader("The Four Necessary Coffman Conditions")
     coffman_data = get_coffman_conditions_summary()
     cols_c = st.columns(4)
     for idx, c in enumerate(coffman_data):
         with cols_c[idx]:
             st.markdown(f"**{idx + 1}. {c['name']}**")
             st.caption(c['definition'])
-            st.markdown(f"*Countermeasure:* {c['prevention_strategy']}")
+            st.markdown(f"*Theoretical Defense:* {c['prevention_strategy']}")
 
     st.markdown("---")
 
-    # Policy Selector
+    # 1. Policy Selector
+    st.subheader("1. Select Prevention Policy")
     policy_choice = st.radio(
-        "Choose Deadlock Prevention Policy to Apply:",
-        ["Policy A: Resource Ordering (Eliminates Circular Wait)", "Policy B: Request-All-Upfront (Eliminates Hold and Wait)"]
+        "Choose Prevention Policy:",
+        [
+            "Policy (a): Resource Ordering (Fixed total order: a process may only request in strictly increasing order) — Eliminates CIRCULAR WAIT",
+            "Policy (b): Request-All-Upfront (Conservative allocation: all needed resources requested before start) — Eliminates HOLD AND WAIT"
+        ],
+        key="radio_prevention_policy"
     )
+    is_ro_selected = "Resource Ordering" in policy_choice
+    policy_key = "resource_ordering" if is_ro_selected else "request_all_upfront"
 
-    if "Resource Ordering" in policy_choice:
-        st.subheader("Policy A: Resource Ordering")
-        st.markdown("""
-        - **Core Concept:** Assign a fixed numerical order to each resource type: $F(R_1) < F(R_2) < F(R_3)$.
-        - **Rule:** A process holding $R_i$ may only request $R_j$ if $F(R_j) > F(R_i)$.
-        - **Eliminated Condition:** 🚫 **Circular Wait**. It is mathematically impossible to form a directed cycle in a total ordering.
-        """)
+    # 2. Select Scenario from Detection Tab
+    st.subheader("2. Target Scenario (from Detection Tab)")
+    scenario_source = st.radio(
+        "Apply Prevention Policy to Scenario from Detection Tab:",
+        [
+            "Single-Instance Deadlocked Scenario (RAG / Wait-For Graph: Circular Wait on R1, R2)",
+            "Multiple-Instance Deadlocked Scenario (Matrix Model: 5 Processes, 3 Resources)"
+        ],
+        key="radio_prevention_scenario",
+        horizontal=True
+    )
+    is_single_scenario = "Single-Instance" in scenario_source
 
-        # Demonstrate on Scenario D
-        st.markdown("#### Application to Scenario D Deadlock (P1 holds R1, wants R2; P2 holds R2, wants R1)")
-        order_dict = {"R1": 1, "R2": 2, "R3": 3}
-        p_reqs = [
-            {"process": "P1", "holding": ["R1"], "requesting": "R2"},
-            {"process": "P2", "holding": ["R2"], "requesting": "R1"},
-        ]
+    st.markdown("---")
 
-        res_order_eval = evaluate_resource_ordering_prevention(["R1", "R2", "R3"], order_dict, p_reqs)
+    # 3. WHICH OF THE FOUR COFFMAN CONDITIONS IS ELIMINATED
+    st.subheader("3. Coffman Condition Elimination Status")
+    st.caption("Deadlock requires ALL FOUR conditions to hold simultaneously. Breaking even ONE makes deadlock mathematically impossible.")
+
+    coffman_breakdown = get_coffman_breakdown(policy_key)
+    cols_coff = st.columns(4)
+    for idx, cb in enumerate(coffman_breakdown):
+        with cols_coff[idx]:
+            if cb["is_eliminated"]:
+                st.markdown(f"""
+                <div style="background-color: #FEF2F2; border: 2px solid #EF4444; border-radius: 8px; padding: 0.85rem; height: 100%;">
+                    <div style="font-weight: 800; color: #991B1B; font-size: 1.0rem; margin-bottom: 0.35rem;">{cb['name']}</div>
+                    <span style="background-color: #EF4444; color: white; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.78rem;">
+                        🚫 ELIMINATED BY POLICY
+                    </span>
+                    <div style="font-size: 0.84rem; color: #7F1D1D; margin-top: 0.5rem; line-height: 1.4;">
+                        <strong>{cb['summary']}</strong><br>{cb['explanation']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div style="background-color: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 8px; padding: 0.85rem; height: 100%;">
+                    <div style="font-weight: 700; color: #1E293B; font-size: 1.0rem; margin-bottom: 0.35rem;">{cb['name']}</div>
+                    <span style="background-color: #64748B; color: white; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 0.78rem;">
+                        {cb['status']}
+                    </span>
+                    <div style="font-size: 0.84rem; color: #475569; margin-top: 0.5rem; line-height: 1.4;">
+                        <strong>{cb['summary']}</strong><br>{cb['explanation']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # 4. RUN SIMULATION & SHOW ORIGINAL VS MODIFIED SIDE-BY-SIDE
+    st.subheader("4. Original vs Modified Result (Side-by-Side Comparison)")
+
+    if is_single_scenario:
+        # Extract inputs from Single-Instance Detection Tab
+        proc_str = st.session_state.get("det_single_proc_str", "P1, P2")
+        res_str = st.session_state.get("det_single_res_str", "R1, R2")
+        alloc_raw = st.session_state.get("det_single_edges_alloc", "R1, P1\nR2, P2")
+        req_raw = st.session_state.get("det_single_edges_req", "P1, R2\nP2, R1")
+
+        p_list = [p.strip() for p in proc_str.split(",") if p.strip()]
+        r_list = [r.strip() for r in res_str.split(",") if r.strip()]
+
+        alloc_edges = []
+        for line in alloc_raw.strip().split("\n"):
+            if "," in line:
+                parts = [x.strip() for x in line.split(",")]
+                if len(parts) == 2 and parts[0] and parts[1]:
+                    alloc_edges.append((parts[0], parts[1]))
+
+        req_edges = []
+        for line in req_raw.strip().split("\n"):
+            if "," in line:
+                parts = [x.strip() for x in line.split(",")]
+                if len(parts) == 2 and parts[0] and parts[1]:
+                    req_edges.append((parts[0], parts[1]))
+
+        sim_res = simulate_prevention_single_instance(
+            p_list, r_list, alloc_edges, req_edges, policy=policy_key
+        )
 
         col_orig, col_mod = st.columns(2)
         with col_orig:
-            st.markdown("**ORIGINAL UNCONSTRAINED SCENARIO:**")
-            st.error("❌ P1 requests R2 while holding R1 (Allowed).\n❌ P2 requests R1 while holding R2 (Allowed).\n➔ **Result: DEADLOCK DETECTED (Cycle P1 ⇄ P2)**")
+            st.markdown("### ❌ Original System State (Unconstrained)")
+            render_status_banner(
+                "DEADLOCK DETECTED",
+                f"Deadlocked Processes: {', '.join(sim_res['original_deadlocked'])}",
+                f"Detected Cycle in Wait-For Graph: {sim_res['original_cycles']}"
+            )
+            st.markdown("**Resource Allocations & Requests:**")
+            st.code(
+                f"Allocations (Held): {alloc_edges}\nRequests (Pending): {req_edges}",
+                language="text"
+            )
+            if is_ro_selected:
+                st.error(
+                    "❌ **Root Cause: Circular Wait Formed!**\n"
+                    "Because requests were unconstrained, P1 waits for R2 held by P2, while P2 waits for R1 held by P1. "
+                    "A closed dependency cycle formed, trapping both processes."
+                )
+            else:
+                st.error(
+                    "❌ **Root Cause: Hold and Wait Formed!**\n"
+                    "P1 holds R1 while waiting for R2. P2 holds R2 while waiting for R1. "
+                    "Because incremental holding was permitted, both processes locked each other out."
+                )
 
         with col_mod:
-            st.markdown("**MODIFIED UNDER RESOURCE ORDERING:**")
-            st.success("✅ P1 requests R2: Allowed (Order 2 > 1).\n🚫 P2 requests R1: REJECTED (Order 1 < 2). P2 must release R2 first!\n➔ **Result: DEADLOCK PREVENTED (Circular Wait Broken)**")
+            st.markdown(f"### ✅ Modified State (Under {sim_res['policy_name'].split(':')[1].strip()})")
+            render_status_banner(
+                "SAFE",
+                "Deadlock Successfully Prevented! Zero Deadlocked Processes.",
+                f"Condition Eliminated: {sim_res['condition_eliminated']} (No cycles can form)."
+            )
 
-        st.markdown("#### System Trade-offs:")
-        tradeoff_df = pd.DataFrame(res_order_eval["tradeoffs"])
-        st.table(tradeoff_df)
+            if is_ro_selected:
+                st.markdown("**Global Resource Ordering Hierarchy:**")
+                st.info(f"Fixed Order: `{' < '.join([f'{r}={idx}' for r, idx in sim_res['resource_order'].items()])}`")
+
+                st.markdown("**Request Validation Under Policy:**")
+                for log_item in sim_res["evaluation_log"]:
+                    if log_item["allowed"]:
+                        st.success(f"✅ {log_item['reason']}")
+                    else:
+                        st.error(f"🚫 {log_item['reason']}")
+
+                st.markdown("**Execution & Cycle-Breaking Trace:**")
+                for step_txt in sim_res["execution_trace"]:
+                    st.write(step_txt)
+            else:
+                st.markdown("**Upfront Resource Allocation Schedule:**")
+                df_sim = pd.DataFrame([{
+                    "Step": item["step"],
+                    "Process": item["process"],
+                    "Action": item["action"],
+                    "Allocated": str(item["resources_allocated"]),
+                    "Held While Waiting": "None (0 units)" if "DEFERRED" in item["action"] else str(item["resources_allocated"]),
+                    "Note": item["note"]
+                } for item in sim_res["simulation_log"]])
+                st.dataframe(df_sim, use_container_width=True)
+
+                st.success(
+                    f"✅ **Hold and Wait Broken:** Waiting process(es) `{sim_res['waiting_processes']}` held ZERO resources "
+                    f"while waiting. Process `{sim_res['execution_order'][0]}` completed cleanly, followed by the remaining processes."
+                )
 
     else:
-        st.subheader("Policy B: Request All Resources Upfront")
-        st.markdown("""
-        - **Core Concept:** A process must request and obtain all of its required resources before it starts executing.
-        - **Rule:** If the complete set of resources is not currently available, the process gets **nothing** and waits.
-        - **Eliminated Condition:** 🚫 **Hold and Wait**. A process never holds resources while waiting for others.
-        """)
+        # Multi-Instance Scenario from Detection Tab
+        m_procs = st.session_state.get("det_multi_processes", ["P0", "P1", "P2", "P3", "P4"])
+        m_res = st.session_state.get("det_multi_resources", ["A", "B", "C"])
+        m_alloc = st.session_state.get("det_multi_alloc", scenarios.get_scenario_d_multi()["allocation"])
+        m_req = st.session_state.get("det_multi_req", scenarios.get_scenario_d_multi()["request"])
+        m_avail = st.session_state.get("det_multi_avail", scenarios.get_scenario_d_multi()["available"])
 
-        needed_map = {
-            "P1": {"R1": 1, "R2": 1},
-            "P2": {"R2": 1, "R3": 1}
-        }
-        avail_map = {"R1": 1, "R2": 1, "R3": 0}
-        upfront_eval = evaluate_request_all_upfront_prevention(["P1", "P2"], needed_map, avail_map)
+        sim_res = simulate_prevention_multi_instance(
+            m_procs, m_res, m_alloc, m_req, m_avail, policy=policy_key
+        )
 
-        col_uo, col_um = st.columns(2)
-        with col_uo:
-            st.markdown("**ORIGINAL INCREMENTAL ALLOCATION:**")
-            st.error("P1 acquires R1 and holds it while waiting for R2.\nP2 acquires R2 and holds it while waiting for R1.\n➔ **Hold and Wait condition satisfied: DEADLOCK DETECTED.**")
+        col_orig, col_mod = st.columns(2)
+        with col_orig:
+            st.markdown("### ❌ Original Matrix State (Incremental Allocation)")
+            render_status_banner(
+                "DEADLOCK DETECTED",
+                f"Deadlocked Processes: {', '.join(sim_res['original_deadlocked'])}",
+                f"Initial Available Vector = {m_avail.tolist()}"
+            )
+            df_alloc_show = pd.DataFrame(m_alloc, index=m_procs, columns=m_res)
+            st.markdown("**Allocation Matrix:**")
+            st.dataframe(df_alloc_show, use_container_width=True)
+            df_req_show = pd.DataFrame(m_req, index=m_procs, columns=m_res)
+            st.markdown("**Request Matrix:**")
+            st.dataframe(df_req_show, use_container_width=True)
 
-        with col_um:
-            st.markdown("**MODIFIED UNDER REQUEST-ALL-UPFRONT:**")
-            st.success("P1 requests {R1, R2} upfront: All available ➔ GRANTED ALL, runs and finishes.\nP2 requests {R2, R3}: R3 unavailable ➔ HOLDS NOTHING while waiting.\n➔ **Hold and Wait Broken: DEADLOCK PREVENTED.**")
+        with col_mod:
+            st.markdown(f"### ✅ Modified State (Under {sim_res['policy_name'].split(':')[1].strip()})")
+            render_status_banner(
+                "SAFE",
+                "Deadlock Successfully Prevented! All processes complete.",
+                f"Condition Eliminated: {sim_res['condition_eliminated']}."
+            )
 
-        st.markdown("#### System Trade-offs:")
-        tradeoff_df = pd.DataFrame(upfront_eval["tradeoffs"])
-        st.table(tradeoff_df)
+            if is_ro_selected:
+                st.markdown("**Global Resource Order Enforced:**")
+                st.info(f"Fixed Hierarchy: `{' < '.join([f'{r}={idx}' for r, idx in sim_res['resource_order'].items()])}`")
+                st.markdown("**Policy Violations Detected & Broken:**")
+                for v in sim_res["violating_requests"]:
+                    st.warning(
+                        f"🚫 Process **{v['process']}** holds {v['held_resources']} but requested {v['requested_resources']}. "
+                        f"Violating lower-ranked requests: {v['violating_res']}. Process forced to release higher resources."
+                    )
+                for rel in sim_res["released_summary"]:
+                    st.success(f"🔄 {rel}")
+                st.markdown(f"**Final Work Vector after all processes finish:** `{sim_res['final_work']}`")
+            else:
+                st.markdown("**Batch Upfront Allocation Schedule:**")
+                df_steps = pd.DataFrame(sim_res["step_log"])
+                st.dataframe(df_steps, use_container_width=True)
+                st.success(
+                    f"✅ **Hold and Wait Eliminated:** Batch 1 ran `{list(set(sim_res['execution_order']) - set(sim_res['waiting_processes']))}`, "
+                    f"while `{sim_res['waiting_processes']}` held 0 while waiting. All jobs completed in order."
+                )
+
+    st.markdown("---")
+
+    # 5. TRADE-OFFS PANEL (WITH REAL SCENARIO NUMBERS)
+    st.subheader("5. ⚖️ Comprehensive System Trade-offs Panel (With Real Scenario Metrics)")
+    st.caption("Preventing deadlock via design constraints comes at the expense of system performance, flexibility, and throughput.")
+
+    tradeoffs = sim_res["tradeoffs"]
+    col_t1, col_t2 = st.columns(2)
+    col_t3, col_t4 = st.columns(2)
+
+    with col_t1:
+        u = tradeoffs["resource_utilization"]
+        st.markdown(f"""
+        <div style="background-color: #FEF3C7; border: 2px solid #F59E0B; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="font-weight: 700; color: #92400E; font-size: 1.05rem; margin-bottom: 0.35rem;">📉 {u['title']}</div>
+            <div style="font-size: 1.3rem; font-weight: 800; color: #B45309; margin-bottom: 0.35rem;">{u['metric_value']}</div>
+            <div style="font-size: 0.88rem; color: #78350F; line-height: 1.45;">
+                {u['explanation']}<br>
+                <strong>Scenario Metric:</strong> <code>{u['calculation']}</code>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_t2:
+        c = tradeoffs["reduced_concurrency"]
+        st.markdown(f"""
+        <div style="background-color: #EFF6FF; border: 2px solid #3B82F6; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="font-weight: 700; color: #1E40AF; font-size: 1.05rem; margin-bottom: 0.35rem;">⚡ {c['title']}</div>
+            <div style="font-size: 1.3rem; font-weight: 800; color: #1D4ED8; margin-bottom: 0.35rem;">{c['metric_value']}</div>
+            <div style="font-size: 0.88rem; color: #1E3A8A; line-height: 1.45;">
+                {c['explanation']}<br>
+                <strong>Scenario Metric:</strong> <code>{c['calculation']}</code>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_t3:
+        s = tradeoffs["starvation_risk"]
+        st.markdown(f"""
+        <div style="background-color: #FFF1F2; border: 2px solid #F43F5E; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="font-weight: 700; color: #9F1239; font-size: 1.05rem; margin-bottom: 0.35rem;">⚠️ {s['title']}</div>
+            <div style="font-size: 1.3rem; font-weight: 800; color: #BE123C; margin-bottom: 0.35rem;">{s['metric_value']}</div>
+            <div style="font-size: 0.88rem; color: #881337; line-height: 1.45;">
+                {s['explanation']}<br>
+                <strong>Scenario Impact:</strong> <code>{s['impact']}</code>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col_t4:
+        w = tradeoffs["longer_waiting"]
+        st.markdown(f"""
+        <div style="background-color: #F5F3FF; border: 2px solid #8B5CF6; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="font-weight: 700; color: #5B21B6; font-size: 1.05rem; margin-bottom: 0.35rem;">⏳ {w['title']}</div>
+            <div style="font-size: 1.3rem; font-weight: 800; color: #6D28D9; margin-bottom: 0.35rem;">{w['metric_value']}</div>
+            <div style="font-size: 0.88rem; color: #4C1D95; line-height: 1.45;">
+                {w['explanation']}<br>
+                <strong>Scenario Metric:</strong> <code>{w['calculation']}</code>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 # ============================================================================
