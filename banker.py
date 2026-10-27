@@ -442,9 +442,19 @@ def handle_resource_request(
     else:
         viva_exp = f"Granting {p_name}'s request would leave the system unsafe with no guaranteed completion sequence. Request denied and original state restored."
 
+    step_map = {
+        "INVALID": 1,
+        "EXCEEDS_NEED": 2,
+        "WAITING": 3,
+        "GRANTED": 6,
+        "DENIED_UNSAFE": 6
+    }
+    step_reached = step_map.get(core_res["status"], 1)
+
     return {
         "status": ui_status,
         "core_status": core_res["status"],
+        "step_reached": step_reached,
         "granted": is_granted,
         "reason": core_res["message"],
         "process_label": p_name,

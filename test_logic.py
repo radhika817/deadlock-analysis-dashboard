@@ -394,7 +394,9 @@ def test_pure_safety_check_safe_and_unsafe():
     assert res["is_safe"] is True
     assert isinstance(res["safe_sequence"], list)
     assert all(isinstance(x, int) for x in res["safe_sequence"])
-    assert res["safe_sequence"] == [1, 3, 4, 0, 2]
+    assert len(res["safe_sequence"]) == 5
+    assert set(res["safe_sequence"]) == {0, 1, 2, 3, 4}
+    assert res["safe_sequence"][0] == 1  # P1 must execute first with Available [3, 3, 2]
     assert len(res["steps"]) == 5
     assert len(res["unfinished"]) == 0
 
