@@ -175,73 +175,82 @@ def validate_configuration(
         if allocation is None or maximum is None or available is None:
             return False, "Configuration matrices/vectors cannot be None.", "INVALID"
 
-    # Validate shapes and dimensions
-    if alloc_arr.ndim != 2:
-        return False, f"Allocation must be a 2D matrix, got {alloc_arr.ndim}D.", "INVALID"
-    if max_arr.ndim != 2:
-        return False, f"Maximum must be a 2D matrix, got {max_arr.ndim}D.", "INVALID"
+        try:
+            alloc_arr = np.array(allocation)
+            max_arr = np.array(maximum)
+            avail_arr = np.array(available).flatten()
+        except Exception as e:
+            return False, f"Unable to parse configuration matrices ({e}).", "INVALID"
 
-    if alloc_arr.shape != max_arr.shape:
-        return False, (
-            f"Dimension mismatch between Allocation {alloc_arr.shape} "
-            f"and Maximum {max_arr.shape}."
-        ), "INVALID"
+        # Validate shapes and dimensions
+        if alloc_arr.ndim != 2:
+            return False, f"Allocation must be a 2D matrix, got {alloc_arr.ndim}D.", "INVALID"
+        if max_arr.ndim != 2:
+            return False, f"Maximum must be a 2D matrix, got {max_arr.ndim}D.", "INVALID"
 
-    n_proc, n_res = alloc_arr.shape
+        if alloc_arr.shape != max_arr.shape:
+            return False, (
+                f"Dimension mismatch between Allocation {alloc_arr.shape} "
+                f"and Maximum {max_arr.shape}."
+            ), "INVALID"
 
-    # Validate allocation matrix contents
-    is_alloc_valid, alloc_msg, _ = validate_matrix(alloc_arr, n_proc, n_res, name="Allocation matrix")
-    if not is_alloc_valid:
-        return False, alloc_msg, "INVALID"
+        n_proc, n_res = alloc_arr.shape
 
-    # Validate maximum matrix contents
-    is_max_valid, max_msg, _ = validate_matrix(max_arr, n_proc, n_res, name="Maximum matrix")
-    if not is_max_valid:
-        return False, max_msg, "INVALID"
+        # Validate allocation matrix contents
+        is_alloc_valid, alloc_msg, _ = validate_matrix(alloc_arr, n_proc, n_res, name="Allocation matrix")
+        if not is_alloc_valid:
+            return False, alloc_msg, "INVALID"
 
-    # Validate available vector
-    is_avail_valid, avail_msg, avail_kind = validate_vector(avail_arr, n_res, name="Available vector")
-    if not is_avail_valid:
-        return False, avail_msg, "INVALID"
+        # Validate maximum matrix contents
+        is_max_valid, max_msg, _ = validate_matrix(max_arr, n_proc, n_res, name="Maximum matrix")
+        if not is_max_valid:
+            return False, max_msg, "INVALID"
 
-    # Labels for clear cell reporting
-    p_labels = process_labels if process_labels and len(process_labels) == n_proc else [f"P{i}" for i in range(n_proc)]
-    r_labels = resource_labels if resource_labels and len(resource_labels) == n_res else [f"R{j}" for j in range(n_res)]
+        # Validate available vector
+        is_avail_valid, avail_msg, avail_kind = validate_vector(avail_arr, n_res, name="Available vector")
+        if not is_avail_valid:
+            return False, avail_msg, "INVALID"
 
-    # Check: Allocation <= Maximum for every cell
-    violations = alloc_arr > max_arr
-    if np.any(violations):
-        coords = np.argwhere(violations)[0]
-        r, c = int(coords[0]), int(coords[1])
-        return False, (
-            f"Allocation exceeds Maximum at process {p_labels[r]}, resource {r_labels[c]}: "
-            f"Allocation={alloc_arr[r, c]} > Maximum={max_arr[r, c]}."
-        ), "INVALID"
+        # Labels for clear cell reporting
+        p_labels = process_labels if process_labels and len(process_labels) == n_proc else [f"P{i}" for i in range(n_proc)]
+        r_labels = resource_labels if resource_labels and len(resource_labels) == n_res else [f"R{j}" for j in range(n_res)]
 
-    # Check Boundary Cases
-    is_avail_zero = np.all(avail_arr == 0)
-    need_arr = max_arr - alloc_arr
-    zero_need_procs = [p_labels[i] for i in range(n_proc) if np.all(need_arr[i] == 0)]
+        # Check: Allocation <= Maximum for every cell
+        violations = alloc_arr > max_arr
+        if np.any(violations):
+            coords = np.argwhere(violations)[0]
+            r, c = int(coords[0]), int(coords[1])
+            return False, (
+                f"Allocation exceeds Maximum at process {p_labels[r]}, resource {r_labels[c]}: "
+                f"Allocation={alloc_arr[r, c]} > Maximum={max_arr[r, c]}."
+            ), "INVALID"
 
-    if is_avail_zero and zero_need_procs:
-        return True, (
-            f"Valid boundary state: Available is all zeros, and process(es) "
-            f"{', '.join(zero_need_procs)} have remaining Need = 0."
-        ), "VALID_BOUNDARY"
+        # Check Boundary Cases
+        is_avail_zero = np.all(avail_arr == 0)
+        need_arr = max_arr - alloc_arr
+        zero_need_procs = [p_labels[i] for i in range(n_proc) if np.all(need_arr[i] == 0)]
 
-    if is_avail_zero:
-        return True, (
-            "Valid boundary state: Available vector is all zeros "
-            "(all resources are temporarily allocated to active processes)."
-        ), "VALID_BOUNDARY"
+        if is_avail_zero and zero_need_procs:
+            return True, (
+                f"Valid boundary state: Available is all zeros, and process(es) "
+                f"{', '.join(zero_need_procs)} have remaining Need = 0."
+            ), "VALID_BOUNDARY"
 
-    if zero_need_procs:
-        return True, (
-            f"Valid boundary state: Process(es) {', '.join(zero_need_procs)} have remaining Need = 0 "
-            "(process already holds its declared maximum demand and can finish)."
-        ), "VALID_BOUNDARY"
+        if is_avail_zero:
+            return True, (
+                "Valid boundary state: Available vector is all zeros "
+                "(all resources are temporarily allocated to active processes)."
+            ), "VALID_BOUNDARY"
 
-    return True, "Configuration is valid.", "VALID"
+        if zero_need_procs:
+            return True, (
+                f"Valid boundary state: Process(es) {', '.join(zero_need_procs)} have remaining Need = 0 "
+                "(process already holds its declared maximum demand and can finish)."
+            ), "VALID_BOUNDARY"
+
+        return True, "Configuration is valid.", "VALID"
+    except Exception as e:
+        return False, f"Configuration validation error ({e}).", "INVALID"
 
 
 def validate_request(
@@ -252,6 +261,7 @@ def validate_request(
 ) -> Tuple[bool, str, str]:
     """
     Validates a resource request.
+    Never raises exceptions.
 
     Checks:
     - Valid process ID
@@ -261,20 +271,23 @@ def validate_request(
     Returns:
         (is_valid, message, kind) where kind is "VALID", "VALID_BOUNDARY", or "INVALID".
     """
-    # 1. Validate process ID
-    is_pid_valid, pid_msg, _ = validate_process_id(process_id, num_processes)
-    if not is_pid_valid:
-        return False, pid_msg, "INVALID"
+    try:
+        # 1. Validate process ID
+        is_pid_valid, pid_msg, _ = validate_process_id(process_id, num_processes)
+        if not is_pid_valid:
+            return False, pid_msg, "INVALID"
 
-    # 2. Validate request vector
-    is_vec_valid, vec_msg, vec_kind = validate_vector(request, num_resources, name="Request vector")
-    if not is_vec_valid:
-        return False, vec_msg, "INVALID"
+        # 2. Validate request vector
+        is_vec_valid, vec_msg, vec_kind = validate_vector(request, num_resources, name="Request vector")
+        if not is_vec_valid:
+            return False, vec_msg, "INVALID"
 
-    if vec_kind == "VALID_BOUNDARY":
-        return True, "Request vector is all zeros (valid boundary request).", "VALID_BOUNDARY"
+        if vec_kind == "VALID_BOUNDARY":
+            return True, "Request vector is all zeros (valid boundary request).", "VALID_BOUNDARY"
 
-    return True, "Request is valid.", "VALID"
+        return True, "Request is valid.", "VALID"
+    except Exception as e:
+        return False, f"Request validation error ({e}).", "INVALID"
 
 
 # ============================================================================
