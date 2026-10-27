@@ -389,37 +389,165 @@ def test_request_all_upfront_prevention():
 # 5. VALIDATION AND BOUNDARY CASES
 # ============================================================================
 
-def test_zero_available_is_valid_boundary():
-    """Available = [0, 0, 0] is a VALID boundary case, not an error."""
-    alloc = np.array([[1, 0], [0, 1]])
-    max_m = np.array([[1, 1], [1, 1]])
+def test_validation_negative_numbers():
+    """Negative numbers in matrices or vectors must return INVALID."""
+    # Matrix with negative value
+    is_v, msg, kind = validate_matrix([[1, -2], [0, 3]])
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "Negative values are invalid" in msg
+
+    # Vector with negative value
+    is_v, msg, kind = validate_vector([1, -1, 2])
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "Negative value -1 found" in msg
+
+
+def test_validation_non_integers():
+    """Non-integer decimal values in matrices or vectors must return INVALID."""
+    is_v, msg, kind = validate_matrix([[1.5, 2], [0, 1]])
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "non-integer" in msg.lower()
+
+    is_v, msg, kind = validate_vector([1, 2.7, 3])
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "non-integer" in msg.lower()
+
+
+def test_validation_wrong_shapes():
+    """Wrong dimensions or mismatched row/column counts must return INVALID."""
+    # 1D array passed as matrix
+    is_v, msg, kind = validate_matrix([1, 2, 3])
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "Expected a 2D matrix" in msg
+
+    # Row count mismatch
+    is_v, msg, kind = validate_matrix([[1, 2], [3, 4]], expected_rows=3, expected_cols=2)
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "Expected 3 rows" in msg
+
+    # Column count mismatch
+    is_v, msg, kind = validate_matrix([[1, 2], [3, 4]], expected_rows=2, expected_cols=3)
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "Expected 3 columns" in msg
+
+    # Vector length mismatch
+    is_v, msg, kind = validate_vector([1, 2], expected_len=3)
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "Expected length 3" in msg
+
+
+def test_validation_allocation_exceeds_maximum_returns_exact_process_and_resource():
+    """
+    Allocation > Maximum for any cell must return INVALID and specify
+    the exact process and resource labels.
+    """
+    alloc = np.array([[0, 5, 0]])  # Process P0, Resource B is 5
+    max_m = np.array([[7, 2, 3]])  # Maximum for Resource B is 2
+    avail = np.array([3, 3, 2])
+    p_labels = ["P0"]
+    r_labels = ["A", "B", "C"]
+
+    is_v, msg, kind = validate_configuration(alloc, max_m, avail, p_labels, r_labels)
+
+    assert is_v is False
+    assert kind == "INVALID"
+    # Exact process and resource must be identified
+    assert "process P0" in msg
+    assert "resource B" in msg
+    assert "Allocation=5 > Maximum=2" in msg
+
+
+def test_validation_invalid_process_id():
+    """Invalid process IDs (out of bounds, negative, non-numeric) return INVALID."""
+    # Out of upper bound
+    is_v, msg, kind = validate_process_id(99, 5)
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "Out of range" in msg
+
+    # Negative process ID
+    is_v, msg, kind = validate_process_id(-1, 5)
+    assert is_v is False
+    assert kind == "INVALID"
+    assert "Out of range" in msg
+
+    # Non-numeric string
+    is_v, msg, kind = validate_process_id("invalid_proc", 5)
+    assert is_v is False
+    assert kind == "INVALID"
+
+    # Valid process ID
+    is_v, msg, kind = validate_process_id(2, 5)
+    assert is_v is True
+    assert kind == "VALID"
+
+    is_v, msg, kind = validate_process_id("P2", 5)
+    assert is_v is True
+    assert kind == "VALID"
+
+
+def test_validation_valid_boundary_available_all_zeros():
+    """
+    Available = [0, 0, 0] is a VALID boundary case (system fully allocated).
+    Must return is_valid=True and kind='VALID_BOUNDARY'.
+    """
+    alloc = np.array([[1, 2], [2, 1]])
+    max_m = np.array([[2, 2], [2, 2]])
     avail = np.array([0, 0])
 
-    is_valid, status, errors, warnings = validate_system_state(alloc, max_m, avail)
-    assert is_valid is True
-    assert status == "VALID"
-    assert any("Boundary Condition Note: All Available resources are currently 0" in w for w in warnings)
+    is_v, msg, kind = validate_configuration(alloc, max_m, avail)
+    assert is_v is True
+    assert kind == "VALID_BOUNDARY"
+    assert "Available vector is all zeros" in msg
 
 
-def test_zero_need_is_valid_boundary():
-    """Process with Need = [0, 0] is a VALID boundary case."""
-    alloc = np.array([[2, 2]])
-    max_m = np.array([[2, 2]])
+def test_validation_valid_boundary_process_with_zero_need():
+    """
+    A process with Allocation == Maximum has Need == 0.
+    Must return is_valid=True and kind='VALID_BOUNDARY'.
+    """
+    alloc = np.array([[2, 2], [0, 1]])
+    max_m = np.array([[2, 2], [1, 2]])  # P0 has Need = [0, 0]
     avail = np.array([1, 1])
 
-    is_valid, status, errors, warnings = validate_system_state(alloc, max_m, avail)
-    assert is_valid is True
-    assert any("remaining Need = 0" in w for w in warnings)
+    is_v, msg, kind = validate_configuration(alloc, max_m, avail, process_labels=["P0", "P1"])
+    assert is_v is True
+    assert kind == "VALID_BOUNDARY"
+    assert "remaining Need = 0" in msg
+    assert "P0" in msg
 
 
-def test_allocation_exceeds_maximum_is_invalid():
-    """Allocation > Maximum must return INVALID INPUT with exact cell."""
-    alloc = np.array([[0, 5, 0]])
-    max_m = np.array([[7, 2, 3]])
-    avail = np.array([3, 3, 2])
+def test_validation_valid_boundary_all_zero_request():
+    """Request vector with all zeros is a valid boundary request."""
+    is_v, msg, kind = validate_request(0, [0, 0, 0], num_processes=5, num_resources=3)
+    assert is_v is True
+    assert kind == "VALID_BOUNDARY"
 
-    is_valid, status, errors, warnings = validate_system_state(alloc, max_m, avail)
-    assert is_valid is False
-    assert status == "INVALID INPUT"
-    assert len(errors) == 1
-    assert "Allocation > Maximum violation at cell [P0, R1]" in errors[0]
+
+def test_validation_never_raises_exceptions():
+    """Validation functions must never crash or raise unhandled exceptions."""
+    # Test with None, strings, empty lists, malformed inputs
+    is_v, msg, kind = validate_matrix(None)
+    assert is_v is False
+    assert kind == "INVALID"
+
+    is_v, msg, kind = validate_vector(None)
+    assert is_v is False
+    assert kind == "INVALID"
+
+    is_v, msg, kind = validate_configuration("not a matrix", [], None)
+    assert is_v is False
+    assert kind == "INVALID"
+
+    is_v, msg, kind = validate_request(None, None, 5, 3)
+    assert is_v is False
+    assert kind == "INVALID"
+
