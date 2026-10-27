@@ -1,7 +1,10 @@
 # Deadlock Analysis and Resource Allocation Dashboard
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://deadlock-analysis-dashboard-gmzoczappdqctv3szzrdim9.streamlit.app/)
+
 An interactive dashboard for learning, simulating, and evaluating how operating systems **avoid**, **detect**, **prevent**, and **recover from** deadlocks. Built for the Operating Systems Internal Assessment (Activity 2: AI-Assisted Dashboard Development and Deadlock Analysis).
 
+> **🌐 Live Deployment:** [https://deadlock-analysis-dashboard-gmzoczappdqctv3szzrdim9.streamlit.app/](https://deadlock-analysis-dashboard-gmzoczappdqctv3szzrdim9.streamlit.app/)  
 > **Course:** Operating Systems  
 > **Topic:** Deadlock Avoidance (Banker's Algorithm), Detection, Prevention, and Recovery  
 > **Entry Point:** `app.py`  
@@ -10,21 +13,28 @@ An interactive dashboard for learning, simulating, and evaluating how operating 
 ---
 
 ## Table of Contents
-1. [How to Run](#how-to-run)
-2. [Project Structure](#project-structure)
-3. [Tools and Technologies Used](#tools-and-technologies-used)
-4. [The 5 Status Messages and Visual Standards](#the-5-status-messages-and-visual-standards)
-5. [Dashboard Tabs and Features](#dashboard-tabs-and-features)
-6. [Analytical Results Table (Scenarios A - F)](#analytical-results-table-scenarios-a---f)
-7. [AI Usage Record](#ai-usage-record)
-8. [Screenshots](#screenshots)
-9. [Viva Preparation & Function Reference](#viva-preparation--function-reference)
+1. [Live Deployment](#live-deployment)
+2. [How to Run](#how-to-run)
+3. [Project Structure](#project-structure)
+4. [Tools and Technologies Used](#tools-and-technologies-used)
+5. [The 5 Status Messages and Visual Standards](#the-5-status-messages-and-visual-standards)
+6. [Dashboard Tabs and Features](#dashboard-tabs-and-features)
+7. [Analytical Results Table (Scenarios A - F)](#analytical-results-table-scenarios-a---f)
+8. [AI Usage Record](#ai-usage-record)
+9. [Screenshots](#screenshots)
+10. [Viva Preparation & Function Reference](#viva-preparation--function-reference)
 
 ---
 
 ## How to Run
 
-### Prerequisites
+### 🌐 Live Cloud App (No Installation Needed)
+Access the live interactive application immediately on any device:  
+👉 **[https://deadlock-analysis-dashboard-gmzoczappdqctv3szzrdim9.streamlit.app/](https://deadlock-analysis-dashboard-gmzoczappdqctv3szzrdim9.streamlit.app/)**
+
+### 💻 Running Locally
+
+#### Prerequisites
 - **Python 3.10+** (Python 3.10, 3.11, 3.12, 3.13, or 3.14)
 - Web browser (Chrome, Firefox, Edge, Safari)
 
