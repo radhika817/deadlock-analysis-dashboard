@@ -363,3 +363,109 @@ def test_wrong_request_vector_length():
     is_valid, _, _, err = validate_request_input(0, [1, 2, 3], 2, 2)
     assert is_valid is False
     assert "Expected length 2, got 3" in err
+
+
+# ============================================================================
+# 8. PURE FUNCTIONS TESTS (calculate_need, safety_check, handle_request)
+# ============================================================================
+
+def test_pure_calculate_need():
+    """calculate_need returns Need = Max - Alloc without modifying inputs in place."""
+    max_m = np.array([[7, 5, 3], [3, 2, 2]])
+    alloc = np.array([[0, 1, 0], [2, 0, 0]])
+    max_orig = max_m.copy()
+    alloc_orig = alloc.copy()
+
+    need = calculate_need(max_m, alloc)
+    expected = np.array([[7, 4, 3], [1, 2, 2]])
+    np.testing.assert_array_equal(need, expected)
+
+    # In-place check
+    np.testing.assert_array_equal(max_m, max_orig)
+    np.testing.assert_array_equal(alloc, alloc_orig)
+
+
+def test_pure_safety_check_safe_and_unsafe():
+    """safety_check returns is_safe, safe_sequence (ints), steps, and unfinished."""
+    sc_a = get_scenario_a()
+    need = calculate_need(sc_a["maximum"], sc_a["allocation"])
+    res = safety_check(sc_a["allocation"], need, sc_a["available"])
+
+    assert res["is_safe"] is True
+    assert isinstance(res["safe_sequence"], list)
+    assert all(isinstance(x, int) for x in res["safe_sequence"])
+    assert res["safe_sequence"] == [1, 3, 4, 0, 2]
+    assert len(res["steps"]) == 5
+    assert len(res["unfinished"]) == 0
+
+    # Unsafe check: Available is 0, Need is positive
+    res_unsafe = safety_check(sc_a["allocation"], need, [0, 0, 0])
+    assert res_unsafe["is_safe"] is False
+    assert len(res_unsafe["unfinished"]) == 5
+
+
+def test_pure_handle_request_all_five_statuses():
+    """
+    Test handle_request for all 5 statuses:
+    1) INVALID
+    2) EXCEEDS_NEED
+    3) WAITING
+    4) GRANTED
+    5) DENIED_UNSAFE
+    and verify input arrays are never modified in place.
+    """
+    sc_a = get_scenario_a()
+    alloc = sc_a["allocation"].copy()
+    max_m = sc_a["maximum"].copy()
+    avail = sc_a["available"].copy()
+
+    orig_alloc = alloc.copy()
+    orig_avail = avail.copy()
+    orig_max = max_m.copy()
+
+    # 1. INVALID (bad process ID, negative, wrong length)
+    res_inv1 = handle_request(99, [1, 0, 0], alloc, max_m, avail)
+    assert res_inv1["status"] == "INVALID"
+    assert res_inv1["safety_result"] is None
+
+    res_inv2 = handle_request(0, [-1, 0, 0], alloc, max_m, avail)
+    assert res_inv2["status"] == "INVALID"
+
+    res_inv3 = handle_request(0, [1, 0], alloc, max_m, avail)
+    assert res_inv3["status"] == "INVALID"
+
+    # 2. EXCEEDS_NEED (P1 Need is [1, 2, 2], requests [2, 0, 0])
+    res_exceed = handle_request(1, [2, 0, 0], alloc, max_m, avail)
+    assert res_exceed["status"] == "EXCEEDS_NEED"
+    assert res_exceed["safety_result"] is None
+
+    # 3. WAITING (P1 requests [1, 0, 0], within Need; but if avail is [0, 0, 0], it must wait)
+    res_wait = handle_request(1, [1, 0, 0], alloc, max_m, [0, 0, 0])
+    assert res_wait["status"] == "WAITING"
+    assert res_wait["safety_result"] is None
+
+    # 4. GRANTED (P1 requests [1, 0, 2], safe)
+    res_grant = handle_request(1, [1, 0, 2], alloc, max_m, avail)
+    assert res_grant["status"] == "GRANTED"
+    assert res_grant["safety_result"] is not None
+    assert res_grant["safety_result"]["is_safe"] is True
+    # new_allocation and new_available must reflect changes
+    np.testing.assert_array_equal(res_grant["new_allocation"][1], np.array([3, 0, 2]))
+    np.testing.assert_array_equal(res_grant["new_available"], np.array([2, 3, 0]))
+
+    # 5. DENIED_UNSAFE (From state after P1 granted, P0 requests [0, 2, 0])
+    post_grant_alloc = res_grant["new_allocation"]
+    post_grant_avail = res_grant["new_available"]
+    res_unsafe = handle_request(0, [0, 2, 0], post_grant_alloc, max_m, post_grant_avail)
+    assert res_unsafe["status"] == "DENIED_UNSAFE"
+    assert res_unsafe["safety_result"] is not None
+    assert res_unsafe["safety_result"]["is_safe"] is False
+    # Original arrays must be unchanged
+    np.testing.assert_array_equal(res_unsafe["new_allocation"], post_grant_alloc)
+    np.testing.assert_array_equal(res_unsafe["new_available"], post_grant_avail)
+
+    # In-place verification: orig arrays were NEVER touched
+    np.testing.assert_array_equal(alloc, orig_alloc)
+    np.testing.assert_array_equal(avail, orig_avail)
+    np.testing.assert_array_equal(max_m, orig_max)
+
