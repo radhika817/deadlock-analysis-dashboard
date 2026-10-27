@@ -48,7 +48,10 @@ from detection import (
 from prevention import (
     evaluate_resource_ordering_prevention,
     evaluate_request_all_upfront_prevention,
-    get_coffman_conditions_summary
+    get_coffman_conditions_summary,
+    get_coffman_breakdown,
+    simulate_prevention_single_instance,
+    simulate_prevention_multi_instance
 )
 from validation import (
     validate_matrix,
@@ -682,5 +685,95 @@ def test_recovery_by_terminating_process_makes_others_finish():
     assert post_res["work"] == [1, 1]
     assert len(post_res["steps"]) == 1
     assert post_res["steps"][0]["process"] == 1
+
+
+def test_simulate_prevention_resource_ordering_breaks_circular_wait():
+    """Applying Resource Ordering to a 2-process circular wait rejects backward request and eliminates Circular Wait."""
+    processes = ["P1", "P2"]
+    resources = ["R1", "R2"]
+    alloc_edges = [("R1", "P1"), ("R2", "P2")]
+    req_edges = [("P1", "R2"), ("P2", "R1")]
+    order = {"R1": 1, "R2": 2}
+
+    res = simulate_prevention_single_instance(
+        processes, resources, alloc_edges, req_edges,
+        policy="resource_ordering",
+        resource_order=order
+    )
+
+    assert res["policy_name"] == "Policy A: Resource Ordering"
+    assert res["condition_eliminated"] == "Circular Wait"
+    assert res["is_original_deadlocked"] is True
+    assert res["deadlock_prevented"] is True
+    assert len(res["modified_deadlocked"]) == 0
+    assert len(res["rejected_edges"]) == 1
+    assert res["rejected_edges"][0] == ("P2", "R1")
+    assert "tradeoffs" in res
+    assert "resource_utilization" in res["tradeoffs"]
+    assert "reduced_concurrency" in res["tradeoffs"]
+    assert "starvation_risk" in res["tradeoffs"]
+    assert "longer_waiting" in res["tradeoffs"]
+
+
+def test_simulate_prevention_request_all_upfront_eliminates_hold_and_wait():
+    """Applying Request-All-Upfront allocates 0 to waiting processes, eliminating Hold and Wait."""
+    processes = ["P1", "P2"]
+    resources = ["R1", "R2"]
+    alloc_edges = [("R1", "P1"), ("R2", "P2")]
+    req_edges = [("P1", "R2"), ("P2", "R1")]
+
+    res = simulate_prevention_single_instance(
+        processes, resources, alloc_edges, req_edges,
+        policy="request_all_upfront"
+    )
+
+    assert res["policy_name"] == "Policy B: Request All Resources Upfront"
+    assert res["condition_eliminated"] == "Hold and Wait"
+    assert res["deadlock_prevented"] is True
+    assert len(res["modified_deadlocked"]) == 0
+    assert "P1" in res["execution_order"]
+    assert "P2" in res["waiting_processes"]
+    assert "tradeoffs" in res
+    assert "resource_utilization" in res["tradeoffs"]
+
+
+def test_simulate_prevention_multi_instance_both_policies():
+    """Test prevention policies on multi-instance deadlocked matrices."""
+    alloc = np.array([[1, 0], [0, 1], [0, 0]])
+    req = np.array([[0, 1], [1, 0], [0, 0]])
+    avail = np.array([0, 0])
+    procs = ["P0", "P1", "P2"]
+    res_names = ["R0", "R1"]
+
+    # Resource ordering
+    ro_res = simulate_prevention_multi_instance(
+        procs, res_names, alloc, req, avail, policy="resource_ordering"
+    )
+    assert ro_res["condition_eliminated"] == "Circular Wait"
+    assert ro_res["deadlock_prevented"] is True
+    assert "tradeoffs" in ro_res
+
+    # Request all upfront
+    up_res = simulate_prevention_multi_instance(
+        procs, res_names, alloc, req, avail, policy="request_all_upfront"
+    )
+    assert up_res["condition_eliminated"] == "Hold and Wait"
+    assert up_res["deadlock_prevented"] is True
+    assert "tradeoffs" in up_res
+
+
+def test_get_coffman_breakdown():
+    """Verify Coffman condition breakdown accurately flags eliminated conditions."""
+    ro_breakdown = get_coffman_breakdown("resource_ordering")
+    assert len(ro_breakdown) == 4
+    # Condition 4 (Circular Wait) must be eliminated
+    assert ro_breakdown[3]["is_eliminated"] is True
+    assert ro_breakdown[1]["is_eliminated"] is False
+
+    up_breakdown = get_coffman_breakdown("request_all_upfront")
+    assert len(up_breakdown) == 4
+    # Condition 2 (Hold and Wait) must be eliminated
+    assert up_breakdown[1]["is_eliminated"] is True
+
 
 
